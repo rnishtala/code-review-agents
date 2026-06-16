@@ -1,0 +1,53 @@
+diff --git a/app/users.py b/app/users.py
+index 1111111..2222222 100644
+--- a/app/users.py
++++ b/app/users.py
+@@ -1,12 +1,33 @@
+ import sqlite3
++import hashlib
+
+
+ def get_connection():
+     return sqlite3.connect("app.db")
+
+
+-def find_user(user_id):
+-    conn = get_connection()
+-    cur = conn.cursor()
+-    cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+-    return cur.fetchone()
++def find_user(username):
++    # Look up a user by name.
++    conn = get_connection()
++    cur = conn.cursor()
++    # SECURITY: username is interpolated directly into the SQL string.
++    query = "SELECT * FROM users WHERE name = '" + username + "'"
++    cur.execute(query)
++    return cur.fetchone()
++
++
++def average_score(scores):
++    # BUG: divides by len(scores) without guarding against an empty list,
++    # so calling average_score([]) raises ZeroDivisionError.
++    total = 0
++    for s in scores:
++        total += s
++    return total / len(scores)
++
++
++def hash_password(password):
++    # WEAK CRYPTO: unsalted MD5 is unsuitable for password hashing.
++    return hashlib.md5(password.encode()).hexdigest()
+diff --git a/tests/test_users.py b/tests/test_users.py
+index 3333333..4444444 100644
+--- a/tests/test_users.py
++++ b/tests/test_users.py
+@@ -1,5 +1,9 @@
+ from app.users import find_user
+
+
+ def test_find_user_returns_none_for_missing():
+     assert find_user("nobody") is None
++
++# NOTE: no tests were added for average_score() or hash_password(),
++# even though both are new public functions.
