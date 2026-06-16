@@ -96,6 +96,29 @@ findings.
 | `OLLAMA_MODEL` | `qwen2.5-coder:3b` | Model used by every agent. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint. |
 | `GITHUB_TOKEN` | _(unset)_ | Optional; raises API limits / allows private PRs. |
+| `CODE_REVIEW_ENABLE_TRACING` | _(unset)_ | Opt back into LangChain/LangSmith tracing. By default the app forces tracing **off** — even if your shell exports `LANGCHAIN_TRACING_V2=true` / a LangSmith key — so no review data leaves your machine. |
+
+## Sample reports on real PRs
+
+The pipeline was run end-to-end (LangGraph + a local `llama3.2:3b`) against three real,
+merged open-source pull requests. The generated reports are checked in under `reports/`:
+
+| Report | PR | Result |
+| --- | --- | --- |
+| [`reports/click-3578.md`](reports/click-3578.md) | [pallets/click#3578](https://github.com/pallets/click/pull/3578) — fix double-bracketing of choices | Medium — test-coverage gaps |
+| [`reports/requests-7502.md`](reports/requests-7502.md) | [psf/requests#7502](https://github.com/psf/requests/pull/7502) — fix `_encode_files` detection | Minimal — clean fix, no findings |
+| [`reports/typer-1821.md`](reports/typer-1821.md) | [tiangolo/typer#1821](https://github.com/tiangolo/typer/pull/1821) — fix list-argument default | High — untested new code |
+
+Reproduce any of them with:
+
+```bash
+PYTHONPATH=src OLLAMA_MODEL=llama3.2:3b GITHUB_TOKEN=$(gh auth token) \
+  python -m code_review_agents.cli --pr https://github.com/pallets/click/pull/3578 --out reports/click-3578.md
+```
+
+Note: report quality tracks the local model. On a 3B model some findings are imprecise
+(e.g. for typer#1821 the test agent flagged the PR's own newly-added test functions as
+"untested"); a larger `qwen2.5-coder:7b` improves precision.
 
 ## Project layout
 

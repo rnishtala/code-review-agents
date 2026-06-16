@@ -14,6 +14,15 @@ from langchain_ollama import ChatOllama
 DEFAULT_MODEL = "qwen2.5-coder:3b"
 DEFAULT_BASE_URL = "http://localhost:11434"
 
+# Honor the "no data leaves your machine" promise. LangChain/LangSmith tracing
+# phones home whenever LANGCHAIN_TRACING_V2 / LANGSMITH_TRACING is enabled in the
+# environment (common in shells that already export a LangSmith API key). We force
+# it OFF here so the privacy guarantee holds regardless of ambient config. A user
+# who genuinely wants tracing can opt back in with CODE_REVIEW_ENABLE_TRACING=1.
+if os.environ.get("CODE_REVIEW_ENABLE_TRACING", "").lower() not in ("1", "true", "yes"):
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    os.environ["LANGSMITH_TRACING"] = "false"
+
 
 def get_model_name(model: str | None = None) -> str:
     """Resolve the model name: explicit arg > OLLAMA_MODEL env > default."""
