@@ -17,9 +17,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+ui = ["streamlit"]
 
 [project.scripts]
 code-review-agents = "code_review_agents.cli:main"
+code-review-ui = "code_review_agents.ui.streamlit_app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

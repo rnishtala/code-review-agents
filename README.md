@@ -82,6 +82,36 @@ python -m code_review_agents.cli --repo-url owner/repo --pr-number 42
 
 Omit `--out` to print the report to stdout.
 
+## Drafting PR comments (Streamlit UI)
+
+Beyond the markdown report, a Streamlit app turns the findings into **targeted inline PR
+comments** you iterate on conversationally and submit **as a draft** — nothing is ever
+auto-posted.
+
+```bash
+pip install -e ".[ui]"          # adds streamlit
+OLLAMA_MODEL=llama3.2:3b GITHUB_TOKEN=$(gh auth token) code-review-ui
+# or: streamlit run src/code_review_agents/ui/streamlit_app.py
+```
+
+Workflow:
+1. **Paste a PR URL and Run** — the app runs the full multi-agent review live, then drafts
+   one comment per finding, each **anchored to a diff line** (best-effort; unmappable ones
+   fall back to file-level). Info-level findings start unchecked.
+2. **Edit** any comment's path / line / body, or toggle include per comment.
+3. **Refine via chat** — tell the drafting agent things like *“make #2 softer”*, *“drop
+   info-level ones”*, *“add a fix snippet to #1”*. Iterate as many times as you like. Type
+   *“abort”* (or “discard”) to clear all drafts instantly.
+4. **Submit as draft review** — gated behind a confirmation checkbox. This creates a
+   **pending** GitHub review (the API call omits the `event` field), so the comments appear
+   as an unsubmitted draft you finalize and submit yourself on github.com.
+
+> Submitting requires a `GITHUB_TOKEN` with **Pull requests: write** (classic `repo` scope
+> or a fine-grained token). Reading a PR/diff does not. Every agent-suggested line is
+> re-validated against the diff before it can be submitted, so a bad line never reaches
+> GitHub. GitHub allows only one pending review per PR per reviewer — finalize or dismiss an
+> existing draft before creating another.
+
 ## Testing
 
 The orchestrator's prioritization and rendering are pure Python and tested offline (no LLM,
@@ -141,8 +171,10 @@ src/code_review_agents/
   agents/           bug, security, test specialists (+ shared base)
   orchestrator.py   dedupe, rank, render report
   graph.py          builds the LangGraph StateGraph
+  comments.py       draft inline PR comments: line mapping, refine agent, pending-review submit
+  ui/streamlit_app.py  Streamlit UI to draft, iterate, and submit a draft review
   cli.py            argparse entrypoint
 samples/sample.diff bundled fixture with planted issues
 reports/            sample reports generated on real PRs
-tests/              offline tests (orchestrator, full graph, research)
+tests/              offline tests (orchestrator, full graph, research, comments)
 ```
