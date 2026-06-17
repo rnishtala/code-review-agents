@@ -91,6 +91,42 @@ def test_map_finding_basename_match():
     assert cand.path == "utils/calc.py"
 
 
+def test_explicit_line_in_location_is_used():
+    files = parse_diff(DIFF)
+    f = Finding(severity="high", title="issue", location="utils/calc.py:14")
+    cand = map_finding(f, files)
+    assert cand.path == "utils/calc.py"
+    assert cand.line == 14  # exact valid line honored
+
+
+def test_explicit_line_out_of_range_snaps_to_nearest():
+    files = parse_diff(DIFF)
+    f = Finding(severity="high", title="issue", location="utils/calc.py:999")
+    cand = map_finding(f, files)
+    assert cand.path == "utils/calc.py"
+    assert cand.line == 15  # nearest valid diff line in that file
+    assert "snapped" in cand.note
+
+
+def test_distinct_findings_map_to_distinct_lines():
+    # Two findings on the same file but naming different things must NOT collapse to one line.
+    files = parse_diff(DIFF)
+    a = Finding(severity="high", title="SQL injection", location="app/users.py: find_user")
+    b = Finding(severity="medium", title="stray import", location="app/users.py",
+                description="the new `sys` import is unused")
+    ca, cb = map_finding(a, files), map_finding(b, files)
+    assert ca.line == 3   # the def find_user line
+    assert cb.line == 2   # the `import sys` added line
+    assert ca.line != cb.line
+
+
+def test_identifier_match_plain_lowercase_symbol():
+    files = parse_diff(DIFF)
+    f = Finding(severity="high", title="zero division", location="utils/calc.py: average")
+    cand = map_finding(f, files)
+    assert cand.line == 12  # `def average` line, matched by the location symbol
+
+
 def test_anchor_findings_seeds_and_defaults():
     findings = [
         Finding(agent="security", severity="critical", title="SQLi", location="app/users.py: find_user",

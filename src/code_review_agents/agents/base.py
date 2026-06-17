@@ -24,8 +24,11 @@ Review the following unified diff. Focus ONLY on your specialty. Report concrete
 you can point to in the diff; do not invent problems. Use the linked issue context (if any)
 to judge whether the change actually addresses the reported problem. For each issue give:
 category, severity (critical|high|medium|low|info), a short title, a description of why it
-matters, the location (file and/or function), a concrete suggestion, and your confidence
-(high|medium|low). If you find no issues, return an empty list.
+matters, the location, a concrete suggestion, and your confidence (high|medium|low).
+
+For `location`, give the file path and, when you can, the specific changed line as
+`path:line` (e.g. `app/users.py:42`) or otherwise `path:function_name`. If you find no
+issues, return an empty list.
 
 Unified diff:
 {diff}

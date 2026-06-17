@@ -200,33 +200,111 @@ def _match_file(finding: Finding, files: list[DiffFile]) -> DiffFile | None:
     return None
 
 
-def _symbol_from_location(location: str) -> str:
-    """Text after the first ':' in a location often names a function/symbol."""
-    return location.split(":", 1)[1].strip() if ":" in location else ""
+def _explicit_line(location: str) -> int | None:
+    """A line number the model put in the location, e.g. 'tests/x.py:216' or 'x.py:L216-220'."""
+    if ":" not in location:
+        return None
+    suffix = location.rsplit(":", 1)[1].strip().lstrip("Ll")
+    head = suffix.split("-")[0].split(",")[0].strip()
+    return int(head) if head.isdigit() else None
 
 
-def _pick_line(f: DiffFile, symbol: str) -> tuple[int | None, str]:
-    """Choose a RIGHT-side line within a matched file. Prefer a symbol hit, then first added line."""
-    if symbol:
-        needle = symbol.split("(")[0].strip()  # drop "(args)" from a function ref
-        if needle:
+def _snap_to_valid(line: int, f: DiffFile) -> tuple[int | None, str]:
+    """Snap an arbitrary line to the nearest line that actually appears in the file's diff."""
+    valid = f.valid_lines()
+    if not valid:
+        return None, "no commentable line in diff"
+    if line in valid:
+        return line, f"explicit line {line}"
+    nearest = min(valid, key=lambda v: (abs(v - line), v))
+    return nearest, f"snapped to nearest diff line {nearest} (location said {line})"
+
+
+_BACKTICK_RE = re.compile(r"`([^`]+)`")
+_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+_STOPWORDS = {
+    "the", "and", "for", "this", "that", "with", "not", "function", "method",
+    "class", "line", "code", "test", "tests", "value", "error", "check", "missing",
+}
+
+
+def _identifiers(symbol: str, *prose: str) -> list[str]:
+    """Identifiers to match against diff lines, most-specific first.
+
+    The location ``symbol`` (what the model explicitly named as the spot) contributes ALL its
+    tokens — even plain lowercase names like ``average`` — since it's the designated locus.
+    Prose (title/description) only contributes *code-shaped* tokens (``_`` / interior capital)
+    or backticked snippets, so ordinary words don't mis-anchor. Stopwords are dropped.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(tok: str) -> None:
+        if len(tok) >= 3 and tok.lower() not in _STOPWORDS and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+
+    for tok in _TOKEN_RE.findall(symbol):  # designated location: take all tokens
+        add(tok)
+    for text in prose:  # backticked snippets are explicit code references
+        for m in _BACKTICK_RE.finditer(text):
+            for tok in _TOKEN_RE.findall(m.group(1)):
+                add(tok)
+    for text in prose:  # bare prose tokens only if they look like code
+        for tok in _TOKEN_RE.findall(text):
+            if "_" in tok or re.search(r"[a-z][A-Z]", tok):
+                add(tok)
+    return out
+
+
+def _line_by_identifiers(f: DiffFile, idents: list[str]) -> tuple[int | None, str]:
+    """Find a line whose code contains one of the identifiers — added lines win over context."""
+    for prefer_added in (True, False):
+        for ident in idents:
             for h in f.hunks:
                 for (ln, is_add, text) in h.entries:
-                    if ln is not None and needle in text:
-                        return ln, f"matched '{needle}' in {h.header}"
-    for h in f.hunks:
-        if h.added_lines:
-            return h.added_lines[0], f"first added line in {h.header}"
-    return None, "no added line in diff; file-level comment"
+                    if ln is None or (prefer_added and not is_add):
+                        continue
+                    if ident in text:
+                        where = "added" if is_add else "context"
+                        return ln, f"matched '{ident}' on {where} line"
+    return None, ""
 
 
 def map_finding(finding: Finding, files: list[DiffFile]) -> AnchorCandidate:
-    """Best-effort anchor of a finding to (path, RIGHT line). Degrades to file-level / unmatched."""
+    """Best-effort anchor of a finding to (path, RIGHT line). Degrades to file-level / unmatched.
+
+    Order: (1) an explicit line number in the location, snapped to the nearest real diff line;
+    (2) a code identifier from the location/title/description matched against diff lines;
+    (3) the first changed line. (1) and (2) keep distinct findings on distinct lines instead
+    of collapsing them all onto the first hunk.
+    """
     f = _match_file(finding, files)
     if f is None:
         return AnchorCandidate(path="", line=None, anchored=False, note="no matching file in diff")
-    line, note = _pick_line(f, _symbol_from_location(finding.location))
-    return AnchorCandidate(path=f.path, line=line, anchored=line is not None, note=note)
+    if not f.valid_lines():
+        return AnchorCandidate(path=f.path, line=None, anchored=False, note="deletion-only; file-level comment")
+
+    # 1. Explicit line number in the location.
+    explicit = _explicit_line(finding.location)
+    if explicit is not None:
+        line, note = _snap_to_valid(explicit, f)
+        if line is not None:
+            return AnchorCandidate(path=f.path, line=line, anchored=True, note=note)
+
+    # 2. Code identifier match (location symbol, then title, then description).
+    symbol = finding.location.rsplit(":", 1)[1] if ":" in finding.location else ""
+    idents = _identifiers(symbol, finding.title, finding.description)
+    line, note = _line_by_identifiers(f, idents)
+    if line is not None:
+        return AnchorCandidate(path=f.path, line=line, anchored=True, note=note)
+
+    # 3. First changed line.
+    added = f.added_lines()
+    if added:
+        return AnchorCandidate(path=f.path, line=added[0], anchored=True, note="first changed line")
+    first = sorted(f.valid_lines())[0]
+    return AnchorCandidate(path=f.path, line=first, anchored=True, note="first diff line")
 
 
 def _seed_body(finding: Finding) -> str:
