@@ -363,6 +363,30 @@ def _tolerant_parse(text: str) -> DraftResult | None:
         return None
 
 
+def _preserve_anchors(
+    new_comments: list[DraftComment], prior: list[DraftComment]
+) -> list[DraftComment]:
+    """Restore each comment's anchor from the prior draft with the same id.
+
+    The chat agent edits content and inclusion; the *anchor* (path/line/side/severity/source)
+    is managed via the UI's fields, not chat. Small models routinely drop or mangle these
+    fields when asked to tweak wording, which would strip a comment's path and make it
+    unsubmittable. Re-attaching anchors by id keeps refined comments anchored and submittable.
+    Comments the model invents with a new id keep their own fields (then get line-revalidated).
+    """
+    by_id = {d.id: d for d in prior}
+    for c in new_comments:
+        base = by_id.get(c.id)
+        if base is None:
+            continue
+        c.path = base.path
+        c.line = base.line
+        c.side = base.side
+        c.severity = base.severity
+        c.source_finding_id = base.source_finding_id
+    return new_comments
+
+
 def revalidate_lines(drafts: list[DraftComment], files: list[DiffFile]) -> list[DraftComment]:
     """Clamp every draft's line to a real diff line (or demote to file-level). A hallucinated
     line can never reach GitHub."""
@@ -431,6 +455,16 @@ def draft_comments(
     if result.action == "abort":
         return DraftResult(action="abort", comments=[], message=result.message or "Discarded all draft comments.")
 
+    # An update with no comments is almost always a model glitch (abort is how you clear).
+    # Keep the user's current drafts rather than silently wiping them.
+    if not result.comments:
+        return DraftResult(
+            action="noop",
+            comments=current_drafts,
+            message="The model returned no comments; kept your current drafts. (Say 'abort' to clear them.)",
+        )
+
+    result.comments = _preserve_anchors(result.comments, current_drafts)
     result.comments = revalidate_lines(result.comments, files)
     result.action = "update"
     result.message = result.message or "Updated drafts."

@@ -117,3 +117,27 @@ def test_unparseable_output_keeps_drafts():
     out = draft_comments(_findings(), DIFF, current, [], "edit", llm=llm)
     assert out.action == "noop"
     assert out.comments == current
+
+
+def test_refine_preserves_anchor_when_model_drops_path():
+    # Model returns the same comment id but strips path/line while rewording the body.
+    prior = DraftComment(path="app/users.py", line=2, body="original", severity="high")
+    canned = DraftResult(
+        action="update",
+        comments=[DraftComment(id=prior.id, path="", line=None, body="reworded, friendlier")],
+        message="softened",
+    )
+    out = draft_comments(_findings(), DIFF, [prior], [], "make it softer", llm=_FakeLLM(structured=canned))
+    c = out.comments[0]
+    assert c.body == "reworded, friendlier"  # content edit kept
+    assert c.path == "app/users.py" and c.line == 2  # anchor restored from prior
+    assert c.severity == "high"
+
+
+def test_empty_update_keeps_current_drafts():
+    # A model that returns action=update with zero comments must not wipe the user's drafts.
+    canned = DraftResult(action="update", comments=[], message="")
+    current = [DraftComment(path="app/users.py", line=2, body="keep me")]
+    out = draft_comments(_findings(), DIFF, current, [], "tweak wording", llm=_FakeLLM(structured=canned))
+    assert out.action == "noop"
+    assert out.comments == current

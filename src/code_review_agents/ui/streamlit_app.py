@@ -159,9 +159,17 @@ def render() -> None:
         "I understand this creates a PENDING review on GitHub that I must finalize manually.",
         key="confirm_submit",
     )
-    submit = st.button(
-        "Submit as draft review", type="primary", disabled=(n_incl == 0 or not confirm or ss.aborted)
-    )
+    disabled = n_incl == 0 or not confirm or ss.aborted
+    submit = st.button("Submit as draft review", type="primary", disabled=disabled)
+    if disabled:
+        reasons = []
+        if ss.aborted:
+            reasons.append("drafts were discarded — refine again to recreate them")
+        elif n_incl == 0:
+            reasons.append("no comments are currently included with a file path — tick **Include** on at least one comment (a refine may have excluded them all)")
+        if not confirm:
+            reasons.append("the confirmation checkbox above is unchecked")
+        st.caption("Submit is disabled because: " + "; ".join(reasons) + ".")
     if submit:
         try:
             with st.spinner("Creating pending review on GitHub…"):

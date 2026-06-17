@@ -101,16 +101,24 @@ Workflow:
 2. **Edit** any comment's path / line / body, or toggle include per comment.
 3. **Refine via chat** — tell the drafting agent things like *“make #2 softer”*, *“drop
    info-level ones”*, *“add a fix snippet to #1”*. Iterate as many times as you like. Type
-   *“abort”* (or “discard”) to clear all drafts instantly.
+   *“abort”* (or “discard”) to clear all drafts instantly. Each comment's anchor
+   (path/line) is preserved across refines, so wording edits never strip it — and an
+   instruction the model botches into an empty result keeps your current drafts rather than
+   wiping them.
 4. **Submit as draft review** — gated behind a confirmation checkbox. This creates a
    **pending** GitHub review (the API call omits the `event` field), so the comments appear
-   as an unsubmitted draft you finalize and submit yourself on github.com.
+   as an unsubmitted draft you finalize and submit yourself on github.com. If the button is
+   disabled, the UI says why (e.g. nothing is included, or the confirmation box is unchecked).
 
 > Submitting requires a `GITHUB_TOKEN` with **Pull requests: write** (classic `repo` scope
 > or a fine-grained token). Reading a PR/diff does not. Every agent-suggested line is
 > re-validated against the diff before it can be submitted, so a bad line never reaches
 > GitHub. GitHub allows only one pending review per PR per reviewer — finalize or dismiss an
 > existing draft before creating another.
+>
+> **Model quality:** drafting/refine quality tracks the local model. On a 3B model, refines
+> can be hit-or-miss (vague anchors, over-aggressive exclusions); a larger `qwen2.5-coder:7b`
+> behaves noticeably better.
 
 ## Testing
 
