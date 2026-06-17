@@ -37,6 +37,28 @@ class DiffBundle:
     diff: str
     context: str
     truncated: bool = False
+    owner: str = ""
+    repo: str = ""
+    number: int | None = None
+
+
+@dataclass
+class IssueRef:
+    owner: str
+    repo: str
+    number: int
+
+
+@dataclass
+class IssueContext:
+    """A fetched GitHub issue, trimmed to what's useful as review context."""
+
+    ref: IssueRef
+    title: str
+    state: str
+    body: str
+    labels: list[str]
+    comments: list[str]
 
 
 @dataclass
@@ -122,7 +144,10 @@ def fetch_pr_diff(owner: str, repo: str, number: int) -> DiffBundle:
         f"Author: {(meta.get('user') or {}).get('login', 'unknown')}\n"
         f"Description:\n{(meta.get('body') or '(no description provided)').strip()}"
     )
-    return DiffBundle(diff=diff, context=context, truncated=truncated)
+    return DiffBundle(
+        diff=diff, context=context, truncated=truncated,
+        owner=owner, repo=repo, number=number,
+    )
 
 
 def load_local_diff(path: str) -> DiffBundle:
@@ -132,3 +157,105 @@ def load_local_diff(path: str) -> DiffBundle:
     diff, truncated = _truncate(raw)
     context = f"Local unified diff loaded from {path!r}."
     return DiffBundle(diff=diff, context=context, truncated=truncated)
+
+
+# --- Issue research -------------------------------------------------------
+
+# How much of an issue body/comment to keep — small models have tight context windows.
+MAX_ISSUE_BODY_CHARS = 1500
+MAX_ISSUE_COMMENTS = 3
+MAX_COMMENT_CHARS = 600
+
+# "fixes #12", "Closes owner/repo#34", "resolves https://github.com/o/r/issues/56"
+_CLOSING_RE = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
+    r"(?:https?://github\.com/(?P<u1>[\w.-]+)/(?P<r1>[\w.-]+)/issues/(?P<n1>\d+)"
+    r"|(?:(?P<u2>[\w.-]+)/(?P<r2>[\w.-]+))?#(?P<n2>\d+))",
+    re.IGNORECASE,
+)
+# A cross-repo "owner/repo#123" reference without a closing keyword.
+_CROSS_REPO_RE = re.compile(r"\b(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)#(?P<n>\d+)\b")
+# A bare "#123" anywhere (lower priority than an explicit closing keyword).
+_BARE_REF_RE = re.compile(r"(?<![\w/])#(?P<n>\d+)\b")
+# A full issue URL anywhere.
+_ISSUE_URL_RE = re.compile(
+    r"github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)/issues/(?P<n>\d+)"
+)
+
+
+def extract_issue_refs(
+    text: str,
+    default_owner: str,
+    default_repo: str,
+    *,
+    exclude: int | None = None,
+    limit: int = 3,
+) -> list[IssueRef]:
+    """Find issue references in PR text, most-relevant first.
+
+    Closing-keyword references ("fixes #123") come before bare "#123" mentions, since
+    they name the issue the PR is actually resolving. Cross-repo ("owner/repo#123") and
+    full-URL forms are honored; bare references fall back to the PR's own owner/repo.
+    Duplicates and the PR's own number are dropped.
+    """
+    ordered: list[IssueRef] = []
+    seen: set[tuple[str, str, int]] = set()
+
+    def add(owner: str, repo: str, number: int) -> None:
+        owner = owner or default_owner
+        repo = repo or default_repo
+        if not owner or not repo:
+            return  # local diff with no repo context and no explicit owner/repo
+        if number == exclude and owner == default_owner and repo == default_repo:
+            return
+        key = (owner, repo, number)
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(IssueRef(owner=owner, repo=repo, number=number))
+
+    for m in _CLOSING_RE.finditer(text):
+        if m.group("n1"):
+            add(m.group("u1"), m.group("r1"), int(m.group("n1")))
+        else:
+            add(m.group("u2") or "", m.group("r2") or "", int(m.group("n2")))
+    for m in _ISSUE_URL_RE.finditer(text):
+        add(m.group("owner"), m.group("repo"), int(m.group("n")))
+    for m in _CROSS_REPO_RE.finditer(text):
+        add(m.group("owner"), m.group("repo"), int(m.group("n")))
+    for m in _BARE_REF_RE.finditer(text):
+        add("", "", int(m.group("n")))
+
+    return ordered[:limit]
+
+
+def fetch_issue(owner: str, repo: str, number: int) -> IssueContext:
+    """Fetch one issue's title/body/labels plus its first few comments."""
+    base = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{number}"
+    resp = requests.get(base, headers=_headers("application/vnd.github+json"), timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    comments: list[str] = []
+    if data.get("comments"):
+        c_resp = requests.get(
+            f"{base}/comments",
+            headers=_headers("application/vnd.github+json"),
+            params={"per_page": MAX_ISSUE_COMMENTS},
+            timeout=30,
+        )
+        if c_resp.ok:
+            comments = [
+                (c.get("body") or "").strip()[:MAX_COMMENT_CHARS]
+                for c in c_resp.json()[:MAX_ISSUE_COMMENTS]
+                if (c.get("body") or "").strip()
+            ]
+
+    return IssueContext(
+        ref=IssueRef(owner=owner, repo=repo, number=number),
+        title=data.get("title", ""),
+        state=data.get("state", "unknown"),
+        body=(data.get("body") or "").strip()[:MAX_ISSUE_BODY_CHARS],
+        labels=[lbl.get("name", "") for lbl in data.get("labels", []) if lbl.get("name")],
+        comments=comments,
+    )

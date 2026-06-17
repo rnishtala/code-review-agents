@@ -70,6 +70,11 @@ class ReviewState(TypedDict, total=False):
     # Inputs / context
     diff: str
     context: str  # PR title/body or local-diff label, injected into prompts
+    owner: str  # GitHub owner/repo/number, used by the research node to fetch issues
+    repo: str
+    number: int
+    # Produced by the research node: linked-issue (+ optional web) context
+    research: str
     # Produced by the summarize node, shared with every downstream node
     summary: str
     # Specialist agents append here; the reducer merges parallel writes

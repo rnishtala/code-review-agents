@@ -1,21 +1,28 @@
 # Multi-Agent Code Review (LangGraph + local Ollama)
 
 A code-review pipeline built on [LangGraph](https://langchain-ai.github.io/langgraph/).
-A pull request is first **summarized**, then three **specialist agents** review the diff
-in parallel, and an **orchestrator** merges their findings into one prioritized markdown
-report with an overall risk rating.
+A pull request is first **researched** (linked issues fetched for context) and
+**summarized**, then three **specialist agents** review the diff in parallel, and an
+**orchestrator** merges their findings into one prioritized markdown report with an overall
+risk rating.
 
-All inference runs **locally via [Ollama](https://ollama.com)** — no API keys, no Claude,
-no data leaving your machine. The default model is small enough to run on an 8 GB MacBook Air.
+Model inference always runs **locally via [Ollama](https://ollama.com)** — no API keys, no
+Claude, no diff data sent to any LLM. The default model is small enough to run on an 8 GB
+MacBook Air. The research step fetches linked GitHub issues (same network path `--pr`
+already uses); an optional web search is off unless you set a key (see below).
 
 ## Pipeline
 
 ```
-START → summarize → ┌─ bug_agent ─────┐
-                    ├─ security_agent ─┤ → orchestrator → report.md
-                    └─ test_agent ─────┘
+START → research → summarize → ┌─ bug_agent ─────┐
+                               ├─ security_agent ─┤ → orchestrator → report.md
+                               └─ test_agent ─────┘
 ```
 
+- **research** — extracts issue references (`Fixes #123`, `owner/repo#45`, issue URLs) from
+  the PR body/diff, fetches those GitHub issues (title, body, labels, top comments), and —
+  *only if `TAVILY_API_KEY` is set* — adds a web search. This context tells the agents *what
+  problem the PR was meant to solve*, so they can judge whether it actually does.
 - **summarize** — plain-language explanation of *what the PR does* (shared with every agent
   and shown at the top of the report).
 - **bug_agent** — logic errors, edge cases, anti-patterns.
@@ -95,19 +102,21 @@ findings.
 | --- | --- | --- |
 | `OLLAMA_MODEL` | `qwen2.5-coder:3b` | Model used by every agent. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint. |
-| `GITHUB_TOKEN` | _(unset)_ | Optional; raises API limits / allows private PRs. |
+| `GITHUB_TOKEN` | _(unset)_ | Optional; raises API limits / allows private PRs and private issues. |
+| `TAVILY_API_KEY` | _(unset)_ | Optional; enables the research agent's web search. **When set, issue/PR text is sent to Tavily** (a third party). Leave unset to keep the research step GitHub-only. |
 | `CODE_REVIEW_ENABLE_TRACING` | _(unset)_ | Opt back into LangChain/LangSmith tracing. By default the app forces tracing **off** — even if your shell exports `LANGCHAIN_TRACING_V2=true` / a LangSmith key — so no review data leaves your machine. |
 
 ## Sample reports on real PRs
 
-The pipeline was run end-to-end (LangGraph + a local `llama3.2:3b`) against three real,
-merged open-source pull requests. The generated reports are checked in under `reports/`:
+The pipeline was run end-to-end (LangGraph + a local `llama3.2:3b`) against real, merged
+open-source pull requests. The generated reports are checked in under `reports/`:
 
 | Report | PR | Result |
 | --- | --- | --- |
 | [`reports/click-3578.md`](reports/click-3578.md) | [pallets/click#3578](https://github.com/pallets/click/pull/3578) — fix double-bracketing of choices | Medium — test-coverage gaps |
 | [`reports/requests-7502.md`](reports/requests-7502.md) | [psf/requests#7502](https://github.com/psf/requests/pull/7502) — fix `_encode_files` detection | Minimal — clean fix, no findings |
 | [`reports/typer-1821.md`](reports/typer-1821.md) | [tiangolo/typer#1821](https://github.com/tiangolo/typer/pull/1821) — fix list-argument default | High — untested new code |
+| [`reports/flask-5917.md`](reports/flask-5917.md) | [pallets/flask#5917](https://github.com/pallets/flask/pull/5917) — fix `provide_automatic_options` | Medium — **research agent** pulled in linked issue #5916 + web context |
 
 Reproduce any of them with:
 
@@ -126,12 +135,14 @@ Note: report quality tracks the local model. On a 3B model some findings are imp
 src/code_review_agents/
   state.py          Finding model + ReviewState (additive findings reducer)
   llm.py            ChatOllama factory
-  diff_input.py     PR-URL / repo-URL / local-diff loading
+  diff_input.py     PR-URL / repo-URL / local-diff loading + issue extraction/fetch
+  research.py       research node: linked-issue fetch + optional Tavily web search
   summarizer.py     summarize node
   agents/           bug, security, test specialists (+ shared base)
   orchestrator.py   dedupe, rank, render report
   graph.py          builds the LangGraph StateGraph
   cli.py            argparse entrypoint
 samples/sample.diff bundled fixture with planted issues
-tests/              offline orchestrator tests
+reports/            sample reports generated on real PRs
+tests/              offline tests (orchestrator, full graph, research)
 ```

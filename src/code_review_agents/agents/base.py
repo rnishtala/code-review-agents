@@ -16,14 +16,15 @@ from ..llm import make_llm
 from ..state import Finding, FindingList, ReviewState
 
 _PROMPT_TEMPLATE = """\
-{context_block}\
+{context_block}{research_block}\
 PR summary (shared context):
 {summary}
 
 Review the following unified diff. Focus ONLY on your specialty. Report concrete issues
-you can point to in the diff; do not invent problems. For each issue give: category,
-severity (critical|high|medium|low|info), a short title, a description of why it matters,
-the location (file and/or function), a concrete suggestion, and your confidence
+you can point to in the diff; do not invent problems. Use the linked issue context (if any)
+to judge whether the change actually addresses the reported problem. For each issue give:
+category, severity (critical|high|medium|low|info), a short title, a description of why it
+matters, the location (file and/or function), a concrete suggestion, and your confidence
 (high|medium|low). If you find no issues, return an empty list.
 
 Unified diff:
@@ -33,9 +34,12 @@ Unified diff:
 
 def _build_prompt(state: ReviewState) -> str:
     context = state.get("context", "").strip()
+    research = state.get("research", "").strip()
     context_block = f"Context:\n{context}\n\n" if context else ""
+    research_block = f"{research}\n\n" if research else ""
     return _PROMPT_TEMPLATE.format(
         context_block=context_block,
+        research_block=research_block,
         summary=state.get("summary", "(no summary available)"),
         diff=state.get("diff", ""),
     )

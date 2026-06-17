@@ -101,7 +101,7 @@ def _render_finding(index: int, finding: Finding) -> str:
     return "\n\n".join(bits)
 
 
-def render_report(summary: str, findings: list[Finding]) -> str:
+def render_report(summary: str, findings: list[Finding], research: str = "") -> str:
     """Render the full markdown report. Exposed for offline testing."""
     deduped = _dedupe(findings)
     rating = _risk_rating(deduped)
@@ -110,6 +110,11 @@ def render_report(summary: str, findings: list[Finding]) -> str:
         "# Code Review Report",
         "## PR Summary",
         summary.strip() or "_No summary available._",
+    ]
+    if research.strip():
+        # `research` already carries its own "## Linked issue & external context" heading.
+        sections.append(research.strip())
+    sections += [
         "## Overall Risk Rating",
         f"**{rating}** — {len(deduped)} finding(s) after de-duplication.",
         "## Findings by Severity",
@@ -137,4 +142,5 @@ def orchestrate(state: ReviewState) -> dict:
     """LangGraph node: produce ``state['report']``."""
     findings = state.get("findings", [])
     summary = state.get("summary", "")
-    return {"report": render_report(summary, findings)}
+    research = state.get("research", "")
+    return {"report": render_report(summary, findings, research)}

@@ -21,10 +21,13 @@ _SYSTEM = (
 
 def _build_prompt(state: ReviewState) -> str:
     context = state.get("context", "").strip()
+    research = state.get("research", "").strip()
     diff = state.get("diff", "")
     parts = []
     if context:
         parts.append(f"Context:\n{context}")
+    if research:
+        parts.append(research)
     parts.append(f"Unified diff:\n{diff}")
     return "\n\n".join(parts)
 

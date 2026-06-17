@@ -120,7 +120,14 @@ def main(argv: list[str] | None = None) -> int:
 
     app = build_graph()
     final_state = app.invoke(
-        {"diff": bundle.diff, "context": bundle.context, "findings": []}
+        {
+            "diff": bundle.diff,
+            "context": bundle.context,
+            "owner": bundle.owner,
+            "repo": bundle.repo,
+            "number": bundle.number,
+            "findings": [],
+        }
     )
     report = final_state.get("report", "(no report produced)")
 
