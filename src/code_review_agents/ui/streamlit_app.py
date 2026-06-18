@@ -179,24 +179,28 @@ def render() -> None:
             st.markdown(f"➡️ [Open your pending review]({html_url})")
         except requests.HTTPError as exc:  # noqa: BLE001
             code = getattr(exc.response, "status_code", "?")
-            detail = ""
+            detail, errors = "", []
             try:
-                detail = exc.response.json().get("message", "")
+                body = exc.response.json()
+                detail = body.get("message", "")
+                errors = body.get("errors", []) or []
             except Exception:  # noqa: BLE001
                 pass
+            extra = (" Details: " + "; ".join(str(e) for e in errors)) if errors else ""
             if code in (401, 403):
                 st.error(
-                    f"GitHub rejected the request ({code}): {detail}. "
+                    f"GitHub rejected the request ({code}): {detail}.{extra} "
                     "Your GITHUB_TOKEN needs Pull requests **write** access (classic `repo` scope "
                     "or fine-grained Pull requests: Read and write)."
                 )
             elif code == 422:
                 st.error(
-                    f"GitHub could not create the review (422): {detail}. "
-                    "You may already have a pending review on this PR — finalize or dismiss it first."
+                    f"GitHub could not create the review (422): {detail}.{extra} "
+                    "Common causes: a comment isn't anchored to a line in the diff, the PR is "
+                    "closed/merged, or you already have a pending review on this PR."
                 )
             else:
-                st.error(f"GitHub error ({code}): {detail or exc}")
+                st.error(f"GitHub error ({code}): {detail or exc}{extra}")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not submit: {exc}")
 

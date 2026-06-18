@@ -15,7 +15,7 @@ from code_review_agents.comments import (  # noqa: E402
 )
 
 
-def test_payload_line_and_file_level_shapes():
+def test_payload_line_comments_and_file_level_to_body():
     drafts = [
         DraftComment(path="a.py", line=10, body="line comment"),
         DraftComment(path="b.py", line=None, body="file comment"),
@@ -23,8 +23,19 @@ def test_payload_line_and_file_level_shapes():
     payload = build_pending_review_payload(drafts, "sha123")
     assert payload["commit_id"] == "sha123"
     assert "event" not in payload  # pending review: never auto-submitted
-    assert payload["comments"][0] == {"path": "a.py", "line": 10, "side": "RIGHT", "body": "line comment"}
-    assert payload["comments"][1] == {"path": "b.py", "subject_type": "file", "body": "file comment"}
+    # Line comment is anchored; file-level comment is folded into the review body.
+    assert payload["comments"] == [
+        {"path": "a.py", "line": 10, "side": "RIGHT", "body": "line comment"}
+    ]
+    assert "subject_type" not in payload["comments"][0]  # invalid for create-review
+    assert "`b.py`: file comment" in payload["body"]
+
+
+def test_payload_only_file_level_uses_body_no_comments():
+    drafts = [DraftComment(path="b.py", line=None, body="whole-file note")]
+    payload = build_pending_review_payload(drafts, "sha")
+    assert "comments" not in payload  # nothing line-anchored
+    assert "whole-file note" in payload["body"]
 
 
 def test_payload_drops_excluded_and_pathless():

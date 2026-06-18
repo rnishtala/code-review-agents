@@ -97,7 +97,8 @@ OLLAMA_MODEL=llama3.2:3b GITHUB_TOKEN=$(gh auth token) code-review-ui
 Workflow:
 1. **Paste a PR URL and Run** — the app runs the full multi-agent review live, then drafts
    one comment per finding, each **anchored to a diff line** (best-effort; unmappable ones
-   fall back to file-level). Info-level findings start unchecked.
+   fall back to file-level and are collected in the review's summary body on submit, since
+   GitHub's review API only anchors line-level comments). Info-level findings start unchecked.
 2. **Edit** any comment's path / line / body, or toggle include per comment.
 3. **Refine via chat** — tell the drafting agent things like *“make #2 softer”*, *“drop
    info-level ones”*, *“add a fix snippet to #1”*. Iterate as many times as you like. Type

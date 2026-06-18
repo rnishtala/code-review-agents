@@ -564,18 +564,32 @@ def fetch_pr_head_sha(owner: str, repo: str, number: int) -> str:
 
 
 def build_pending_review_payload(drafts: list[DraftComment], commit_id: str = "") -> dict:
-    """Build the reviews payload. Omits `event` so the review stays PENDING (never submitted)."""
+    """Build the reviews payload. Omits `event` so the review stays PENDING (never submitted).
+
+    The create-review API anchors every batched comment to a diff line — it does NOT accept
+    file-level comments (no `subject_type`/`position` support). So line-anchored comments go
+    in ``comments[]``, and any file-level ones are folded into the review ``body`` (which IS
+    supported) as a labeled list, rather than 422-ing the whole review.
+    """
     comments: list[dict] = []
+    file_level: list[DraftComment] = []
     for d in drafts:
         if not d.included or not d.path:
             continue
         if d.line is not None:
             comments.append({"path": d.path, "line": d.line, "side": d.side, "body": d.body})
         else:
-            comments.append({"path": d.path, "subject_type": "file", "body": d.body})
-    if not comments:
+            file_level.append(d)
+    if not comments and not file_level:
         raise ValueError("No includable comments to submit")
-    payload: dict = {"comments": comments}
+
+    payload: dict = {}
+    if comments:
+        payload["comments"] = comments
+    if file_level:
+        body = ["**File-level comments** (not tied to a specific line):", ""]
+        body += [f"- `{d.path}`: {d.body}" for d in file_level]
+        payload["body"] = "\n".join(body)
     if commit_id:
         payload["commit_id"] = commit_id
     return payload  # NOTE: no "event" key => pending/draft review
