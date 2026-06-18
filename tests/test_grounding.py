@@ -5,7 +5,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from code_review_agents.grounding import ground_security_findings  # noqa: E402
+from code_review_agents.grounding import (  # noqa: E402
+    ground_security_findings,
+    ground_test_findings,
+)
 from code_review_agents.state import Finding  # noqa: E402
 
 # A diff with NO network / crypto / sql / auth footprint (à la pallets/click#3578).
@@ -61,3 +64,43 @@ def test_keeps_findings_that_invoke_no_tracked_concept():
     findings = [_f("Unvalidated index access", "list index may be out of range")]
     kept = ground_security_findings(findings, HARMLESS_DIFF)
     assert len(kept) == 1
+
+
+# Diff that ADDS tests (the pallets/click#3578 situation).
+DIFF_ADDS_TESTS = """\
+diff --git a/tests/test_basic.py b/tests/test_basic.py
+--- a/tests/test_basic.py
++++ b/tests/test_basic.py
+@@ -569,3 +569,8 @@
++def test_choice_argument_optional_metavar(runner):
++    assert "[[foo|bar|baz]]" not in out
++def test_datetime_argument_optional_metavar(runner):
++    assert ok
+"""
+
+
+def test_drops_finding_naming_an_added_test():
+    findings = [_f("Missing tests for `test_choice_argument_optional_metavar` function",
+                   "no test exists", category="untested")]
+    assert ground_test_findings(findings, DIFF_ADDS_TESTS) == []
+
+
+def test_drops_generic_missing_tests_when_pr_adds_tests():
+    findings = [_f("Missing tests for new functionality",
+                   "there are no corresponding tests", category="untested")]
+    assert ground_test_findings(findings, DIFF_ADDS_TESTS) == []
+
+
+def test_keeps_specific_gap_even_when_pr_adds_tests():
+    # A concrete uncovered case survives — the PR added tests but maybe not this edge case.
+    findings = [_f("Empty-list edge case untested",
+                   "no test exercises average_score([]) which raises ZeroDivisionError",
+                   category="untested")]
+    kept = ground_test_findings(findings, DIFF_ADDS_TESTS)
+    assert len(kept) == 1
+
+
+def test_keeps_missing_test_finding_when_pr_adds_no_tests():
+    findings = [_f("Missing tests", "no test for the new helper", category="untested")]
+    # Diff adds no test functions -> the claim stands.
+    assert len(ground_test_findings(findings, HARMLESS_DIFF)) == 1

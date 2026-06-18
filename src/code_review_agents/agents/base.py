@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-from ..grounding import ground_security_findings
+from ..grounding import ground_security_findings, ground_test_findings
 from ..llm import make_llm
 from ..state import Finding, FindingList, ReviewState
 
@@ -124,10 +124,12 @@ def run_agent(state: ReviewState, *, name: str, system_prompt: str) -> dict:
                 )
             ]
 
-    # Drop fabricated security findings that aren't grounded in the diff (small models
-    # routinely hallucinate vulnerability classes absent from the change).
+    # Drop fabricated findings the diff contradicts (small models hallucinate vuln classes
+    # absent from the change, and claim 'missing tests' for behavior the PR already tests).
     if name == "security":
         findings = ground_security_findings(findings, state.get("diff", ""))
+    elif name == "test":
+        findings = ground_test_findings(findings, state.get("diff", ""))
 
     # Stamp the agent name so the orchestrator can attribute findings reliably.
     for finding in findings:

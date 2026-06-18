@@ -12,11 +12,7 @@ _SYSTEM = (
     "important edge cases and error paths that are not exercised, and behavior changes "
     "that should have accompanying test updates. For each gap, suggest a specific test "
     "to add (what to assert and which input). Treat untested new public functions and "
-    "untested security-relevant code as higher severity.\n\n"
-    "IMPORTANT: The diff itself often ADDS tests (look for added lines in test files, e.g. "
-    "'+def test_...'). Before reporting a behavior as untested, check whether the diff "
-    "already adds a test covering it — if it does, do NOT report it as missing. Only flag "
-    "behavior changes that genuinely have no corresponding test added in this diff."
+    "untested security-relevant code as higher severity."
 )
 
 
