@@ -159,6 +159,12 @@ def render() -> None:
         "I understand this creates a PENDING review on GitHub that I must finalize manually.",
         key="confirm_submit",
     )
+    replace_existing = st.checkbox(
+        "Replace an existing pending review on this PR (discards the old draft first)",
+        key="replace_pending",
+        help="GitHub allows only one pending review per PR. Tick this if a previous draft is "
+        "still pending and you want to overwrite it.",
+    )
     disabled = n_incl == 0 or not confirm or ss.aborted
     submit = st.button("Submit as draft review", type="primary", disabled=disabled)
     if disabled:
@@ -173,7 +179,10 @@ def render() -> None:
     if submit:
         try:
             with st.spinner("Creating pending review on GitHub…"):
-                review = submit_pending_review(owner, repo, number, ss.drafts, head_sha=head_sha)
+                review = submit_pending_review(
+                    owner, repo, number, ss.drafts,
+                    head_sha=head_sha, replace_existing=replace_existing,
+                )
             html_url = review.get("html_url", f"https://github.com/{owner}/{repo}/pull/{number}")
             st.success("Pending review created — open it on GitHub to finalize and submit.")
             st.markdown(f"➡️ [Open your pending review]({html_url})")
@@ -194,11 +203,14 @@ def render() -> None:
                     "or fine-grained Pull requests: Read and write)."
                 )
             elif code == 422:
-                st.error(
-                    f"GitHub could not create the review (422): {detail}.{extra} "
-                    "Common causes: a comment isn't anchored to a line in the diff, the PR is "
-                    "closed/merged, or you already have a pending review on this PR."
+                hint = (
+                    " You already have a pending review on this PR — tick **Replace an existing "
+                    "pending review** above and submit again."
+                    if "pending review" in (detail + extra).lower()
+                    else " Common causes: a comment isn't anchored to a line in the diff, or the "
+                    "PR is closed/merged."
                 )
+                st.error(f"GitHub could not create the review (422): {detail}.{extra}{hint}")
             else:
                 st.error(f"GitHub error ({code}): {detail or exc}{extra}")
         except Exception as exc:  # noqa: BLE001

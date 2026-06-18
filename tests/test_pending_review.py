@@ -88,6 +88,48 @@ def test_submit_posts_pending_review(monkeypatch):
     assert out["id"] == 99
 
 
+def test_find_pending_review(monkeypatch):
+    def fake_get(url, headers=None, timeout=None):
+        return _Resp(200, [
+            {"id": 1, "state": "APPROVED"},
+            {"id": 2, "state": "PENDING"},
+        ])
+
+    monkeypatch.setattr(comments.requests, "get", fake_get)
+    from code_review_agents.comments import find_pending_review
+
+    found = find_pending_review("o", "r", 5)
+    assert found["id"] == 2
+
+
+def test_submit_replace_existing_deletes_then_posts(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        if url.endswith("/reviews"):
+            return _Resp(200, [{"id": 77, "state": "PENDING"}])
+        return _Resp(200, {"head": {"sha": "s"}})  # head sha lookup
+
+    def fake_delete(url, headers=None, timeout=None):
+        calls.append(("delete", url))
+        return _Resp(200)
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(("post", url))
+        return _Resp(201, {"id": 78, "html_url": "x"})
+
+    monkeypatch.setattr(comments.requests, "get", fake_get)
+    monkeypatch.setattr(comments.requests, "delete", fake_delete)
+    monkeypatch.setattr(comments.requests, "post", fake_post)
+
+    drafts = [DraftComment(path="a.py", line=1, body="b")]
+    submit_pending_review("o", "r", 5, drafts, head_sha="s", replace_existing=True)
+
+    # The stale pending review (77) is deleted before the new one is posted.
+    assert calls[0] == ("delete", "https://api.github.com/repos/o/r/pulls/5/reviews/77")
+    assert calls[1][0] == "post"
+
+
 def test_submit_fetches_head_sha_when_missing(monkeypatch):
     def fake_get(url, headers=None, timeout=None):
         assert url.endswith("/pulls/5")

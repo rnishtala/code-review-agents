@@ -595,10 +595,48 @@ def build_pending_review_payload(drafts: list[DraftComment], commit_id: str = ""
     return payload  # NOTE: no "event" key => pending/draft review
 
 
+def find_pending_review(owner: str, repo: str, number: int) -> dict | None:
+    """Return the caller's existing PENDING review on the PR, if any (GitHub allows only one)."""
+    resp = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/reviews",
+        headers=_headers("application/vnd.github+json"),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    for review in resp.json():
+        if review.get("state") == "PENDING":
+            return review
+    return None
+
+
+def delete_pending_review(owner: str, repo: str, number: int, review_id: int) -> None:
+    """Discard a pending (unsubmitted) review."""
+    resp = requests.delete(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}",
+        headers=_headers("application/vnd.github+json"),
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
 def submit_pending_review(
-    owner: str, repo: str, number: int, drafts: list[DraftComment], *, head_sha: str | None = None
+    owner: str,
+    repo: str,
+    number: int,
+    drafts: list[DraftComment],
+    *,
+    head_sha: str | None = None,
+    replace_existing: bool = False,
 ) -> dict:
-    """Create a PENDING review on the PR. Returns the review JSON (has `id`, `html_url`)."""
+    """Create a PENDING review on the PR. Returns the review JSON (has `id`, `html_url`).
+
+    GitHub permits only one pending review per user per PR. With ``replace_existing=True`` an
+    existing pending review is discarded first, so a resubmit doesn't 422.
+    """
+    if replace_existing:
+        existing = find_pending_review(owner, repo, number)
+        if existing:
+            delete_pending_review(owner, repo, number, existing["id"])
     if head_sha is None:
         head_sha = fetch_pr_head_sha(owner, repo, number)
     payload = build_pending_review_payload(drafts, head_sha)
