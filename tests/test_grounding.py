@@ -104,3 +104,41 @@ def test_keeps_missing_test_finding_when_pr_adds_no_tests():
     findings = [_f("Missing tests", "no test for the new helper", category="untested")]
     # Diff adds no test functions -> the claim stands.
     assert len(ground_test_findings(findings, HARMLESS_DIFF)) == 1
+
+
+# A Go PR that adds a test file + test function (the otel#36400 situation).
+GO_DIFF_ADDS_TESTS = """\
+diff --git a/pkg/ottl/ottlfuncs/func_trim_test.go b/pkg/ottl/ottlfuncs/func_trim_test.go
+--- /dev/null
++++ b/pkg/ottl/ottlfuncs/func_trim_test.go
+@@ -0,0 +1,5 @@
++func TestTrim(t *testing.T) {
++    // basic cases
++}
+"""
+
+
+def test_detects_go_added_tests():
+    # Before the multi-language fix this diff looked test-free (no 'def test_').
+    findings = [_f("Missing Test Cases for Trim", "add more test cases", category="untested")]
+    assert ground_test_findings(findings, GO_DIFF_ADDS_TESTS) == []
+
+
+def test_generic_edge_cases_boilerplate_dropped_but_concrete_kept():
+    # "including edge cases" is generic boilerplate -> dropped when the PR adds tests;
+    # a concrete condition ("empty input") is specific -> kept.
+    generic = [_f("Missing Test Cases", "add more tests, including edge cases and error handling",
+                  category="untested")]
+    concrete = [_f("Missing test", "no test for empty input which raises", category="untested")]
+    assert ground_test_findings(generic, GO_DIFF_ADDS_TESTS) == []
+    assert len(ground_test_findings(concrete, GO_DIFF_ADDS_TESTS)) == 1
+
+
+def test_detects_test_file_path_even_without_recognized_def():
+    # Added lines in a *_test.go file count as "PR adds tests" even if no def matched.
+    diff = (
+        "diff --git a/x_test.go b/x_test.go\n+++ b/x_test.go\n@@ -0,0 +1,2 @@\n"
+        "+func TestX(t *testing.T) { assertSomething() }\n"
+    )
+    findings = [_f("No tests", "the change is not tested", category="untested")]
+    assert ground_test_findings(findings, diff) == []

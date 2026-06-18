@@ -77,18 +77,29 @@ def _collapse_similar(findings: list[Finding], threshold: float = 0.5) -> list[F
     Small models often emit several findings for one change (observed: 4 comments for a
     single bracket fix). We cluster by Jaccard overlap of significant title/description
     tokens and keep the highest-priority finding per cluster. Iterating best-first means the
-    representative is always the most severe/confident. The 0.5 threshold is deliberately
-    strict so genuinely distinct issues are preserved.
+    representative is the most severe/confident.
+
+    The bar is **content-gated**: a strict 0.5 by default, relaxed to 0.4 when two findings
+    share the same location (same file/line findings are likelier restatements). It is
+    deliberately NOT a pure same-line merge — that would drop a distinct, useful finding
+    (e.g. a `medium` "use TrimSpace" note) in favor of a higher-severity sibling on the same
+    line. Wording must still overlap, so genuinely distinct same-line findings survive.
     """
+    same_loc = 0.4
     reps: list[tuple[set[str], Finding]] = []
     for finding in sorted(findings, key=_sort_key):  # best-first: rep is the strongest
         tokens = _content_tokens(finding)
-        if any(
-            tokens and rep_tokens and len(tokens & rep_tokens) / len(tokens | rep_tokens) >= threshold
-            for rep_tokens, _ in reps
-        ):
-            continue  # near-duplicate of a finding we already kept
-        reps.append((tokens, finding))
+        loc = _normalize(finding.location)
+        merged = False
+        for rep_tokens, rep in reps:
+            if not (tokens and rep_tokens):
+                continue
+            bar = same_loc if (loc and loc == _normalize(rep.location)) else threshold
+            if len(tokens & rep_tokens) / len(tokens | rep_tokens) >= bar:
+                merged = True
+                break
+        if not merged:
+            reps.append((tokens, finding))
     return [f for _, f in reps]
 
 

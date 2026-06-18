@@ -128,6 +128,22 @@ def test_collapse_preserves_distinct_findings():
     assert len(_collapse_similar(findings)) == 2
 
 
+def test_same_line_distinct_findings_survive_collapse():
+    # Two distinct points on the SAME location must NOT collapse — the valuable medium-severity
+    # one would otherwise be dropped in favor of the high-severity sibling (the otel case).
+    loc = "pkg/ottl/ottlfuncs/func_trim.go: trim"
+    findings = [
+        Finding(severity="high", title="Add a null check before strings.Trim",
+                description="handle a nil target before trimming", location=loc),
+        Finding(severity="medium", title="Use strings.TrimSpace instead of strings.Trim",
+                description="default only strips spaces, not tabs or newlines", location=loc),
+    ]
+    out = _collapse_similar(findings)
+    titles = " ".join(f.title for f in out)
+    assert len(out) == 2
+    assert "TrimSpace" in titles  # the useful medium finding is preserved
+
+
 def test_dedupe_and_collapse_combines_both_stages():
     findings = [
         Finding(severity="low", title="Same title", location="a.py", description="x"),

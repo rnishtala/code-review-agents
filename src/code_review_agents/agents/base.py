@@ -126,10 +126,12 @@ def run_agent(state: ReviewState, *, name: str, system_prompt: str) -> dict:
 
     # Drop fabricated findings the diff contradicts (small models hallucinate vuln classes
     # absent from the change, and claim 'missing tests' for behavior the PR already tests).
+    diff = state.get("diff", "")
     if name == "security":
-        findings = ground_security_findings(findings, state.get("diff", ""))
-    elif name == "test":
-        findings = ground_test_findings(findings, state.get("diff", ""))
+        findings = ground_security_findings(findings, diff)
+    # Missing-test claims can come from ANY agent (a bug agent saying "add tests" too), so
+    # ground them regardless of which specialist produced the finding.
+    findings = ground_test_findings(findings, diff)
 
     # Stamp the agent name so the orchestrator can attribute findings reliably.
     for finding in findings:
