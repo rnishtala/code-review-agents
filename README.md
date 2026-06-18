@@ -141,6 +141,7 @@ findings.
 | `OLLAMA_MODEL` | `qwen2.5-coder:3b` | Model used by every agent. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama endpoint. |
 | `GITHUB_TOKEN` | _(unset)_ | Optional; raises API limits / allows private PRs and private issues. |
+| `GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base. Set to a GitHub Enterprise Server endpoint (e.g. `https://github.example.com/api/v3`) to use the tool there. |
 | `TAVILY_API_KEY` | _(unset)_ | Optional; enables the research agent's web search. **When set, issue/PR text is sent to Tavily** (a third party). Leave unset to keep the research step GitHub-only. |
 | `CODE_REVIEW_ENABLE_TRACING` | _(unset)_ | Opt back into LangChain/LangSmith tracing. By default the app forces tracing **off** — even if your shell exports `LANGCHAIN_TRACING_V2=true` / a LangSmith key — so no review data leaves your machine. |
 

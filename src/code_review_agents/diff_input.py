@@ -17,7 +17,19 @@ from dataclasses import dataclass
 
 import requests
 
-GITHUB_API = "https://api.github.com"
+DEFAULT_GITHUB_API = "https://api.github.com"
+
+
+def resolve_github_api() -> str:
+    """Base URL for the GitHub REST API.
+
+    Defaults to public github.com; set ``GITHUB_API_URL`` to target GitHub Enterprise Server
+    (e.g. ``https://github.example.com/api/v3``). Read once at import, so set it before launch.
+    """
+    return os.environ.get("GITHUB_API_URL", DEFAULT_GITHUB_API).rstrip("/")
+
+
+GITHUB_API = resolve_github_api()
 # Above this size we still review, but warn that the tail was truncated so a small local
 # model is not overwhelmed (and to stay under its context window).
 MAX_DIFF_CHARS = 60_000
