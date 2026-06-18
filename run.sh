@@ -15,7 +15,7 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- config (override via env) -------------------------------------------
 PORT="${PORT:-8765}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5-coder:3b}"
 OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 export OLLAMA_MODEL OLLAMA_BASE_URL
 
