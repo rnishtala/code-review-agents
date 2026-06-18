@@ -75,10 +75,16 @@ def test_full_pipeline_offline(monkeypatch):
         lambda *a, **k: _FakeLLM(summary="", findings=canned),
     )
 
-    app = build_graph()
-    final = app.invoke(
-        {"diff": "diff --git a/app/users.py ...", "context": "PR #1", "findings": []}
+    # Diff carries real SQL footprint so the security grounding guard keeps the canned
+    # SQL-injection finding (the guard drops only ungrounded vuln findings).
+    diff = (
+        "diff --git a/app/users.py b/app/users.py\n"
+        "+++ b/app/users.py\n"
+        "@@ -1 +1,2 @@\n"
+        "+    cursor.execute(\"SELECT * FROM users WHERE name = '\" + name + \"'\")\n"
     )
+    app = build_graph()
+    final = app.invoke({"diff": diff, "context": "PR #1", "findings": []})
 
     # Summary flowed through to the report.
     assert final["summary"] == "This PR adds user lookup helpers."
