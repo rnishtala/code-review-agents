@@ -325,7 +325,14 @@ def _seed_body(finding: Finding) -> str:
 
 
 def anchor_findings(findings: list[Finding], diff: str) -> list[DraftComment]:
-    """Seed the initial draft set from findings — deterministic, no LLM (works if Ollama is down)."""
+    """Seed the initial draft set from findings — deterministic, no LLM (works if Ollama is down).
+
+    Findings are deduped and near-duplicate-collapsed first, so a single issue the model
+    described several ways yields one comment, not several.
+    """
+    from .orchestrator import dedupe_and_collapse  # imported here to keep module deps lean
+
+    findings = dedupe_and_collapse(findings)
     files = parse_diff(diff)
     drafts: list[DraftComment] = []
     for i, finding in enumerate(findings):

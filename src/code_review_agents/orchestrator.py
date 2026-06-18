@@ -56,6 +56,47 @@ def _sort_key(finding: Finding) -> tuple[int, int, str]:
     )
 
 
+# Words too generic to signal that two findings describe the same issue.
+_COLLAPSE_STOP = {
+    "the", "and", "for", "this", "that", "with", "not", "are", "was", "has", "have",
+    "function", "method", "class", "code", "value", "issue", "should", "would", "could",
+    "when", "which", "from", "into", "use", "used", "using", "argument", "arguments",
+    "parameter", "param", "option", "options", "case", "cases", "change", "changes",
+}
+
+
+def _content_tokens(finding: Finding) -> set[str]:
+    """Significant lowercase tokens from a finding's title + description."""
+    text = f"{finding.title} {finding.description}".lower()
+    return {t for t in re.findall(r"[a-z0-9_]+", text) if len(t) > 2 and t not in _COLLAPSE_STOP}
+
+
+def _collapse_similar(findings: list[Finding], threshold: float = 0.5) -> list[Finding]:
+    """Merge near-duplicate findings that describe the same issue in different words.
+
+    Small models often emit several findings for one change (observed: 4 comments for a
+    single bracket fix). We cluster by Jaccard overlap of significant title/description
+    tokens and keep the highest-priority finding per cluster. Iterating best-first means the
+    representative is always the most severe/confident. The 0.5 threshold is deliberately
+    strict so genuinely distinct issues are preserved.
+    """
+    reps: list[tuple[set[str], Finding]] = []
+    for finding in sorted(findings, key=_sort_key):  # best-first: rep is the strongest
+        tokens = _content_tokens(finding)
+        if any(
+            tokens and rep_tokens and len(tokens & rep_tokens) / len(tokens | rep_tokens) >= threshold
+            for rep_tokens, _ in reps
+        ):
+            continue  # near-duplicate of a finding we already kept
+        reps.append((tokens, finding))
+    return [f for _, f in reps]
+
+
+def dedupe_and_collapse(findings: list[Finding]) -> list[Finding]:
+    """Exact-dedupe then near-duplicate collapse, returned in prioritized order."""
+    return _collapse_similar(_dedupe(findings))
+
+
 def _risk_rating(findings: list[Finding]) -> str:
     """Overall risk derived from the most severe findings present."""
     if not findings:
@@ -103,7 +144,7 @@ def _render_finding(index: int, finding: Finding) -> str:
 
 def render_report(summary: str, findings: list[Finding], research: str = "") -> str:
     """Render the full markdown report. Exposed for offline testing."""
-    deduped = _dedupe(findings)
+    deduped = dedupe_and_collapse(findings)
     rating = _risk_rating(deduped)
 
     sections = [

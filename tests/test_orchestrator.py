@@ -10,7 +10,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from code_review_agents.orchestrator import (  # noqa: E402
+    _collapse_similar,
     _dedupe,
+    dedupe_and_collapse,
     orchestrate,
     render_report,
 )
@@ -100,6 +102,41 @@ def test_empty_findings_reports_clean():
     report = render_report("Nothing risky here.", [])
     assert "**Minimal**" in report
     assert "No issues were reported" in report
+
+
+def test_collapse_merges_near_duplicates_keeping_strongest():
+    findings = [
+        Finding(severity="medium", confidence="medium",
+                title="Optional Choice arguments reuse the type's brackets instead of doubling",
+                description="make_metavar should not wrap an already-bracketed metavar again"),
+        Finding(severity="high", confidence="high",
+                title="Incorrect bracket wrapping for optional Choice metavar",
+                description="make_metavar wraps an already-bracketed metavar again, doubling brackets"),
+    ]
+    collapsed = _collapse_similar(findings)
+    assert len(collapsed) == 1
+    assert collapsed[0].severity == "high"  # strongest kept
+
+
+def test_collapse_preserves_distinct_findings():
+    findings = [
+        Finding(severity="high", title="SQL injection in find_user",
+                description="user input concatenated into a query string"),
+        Finding(severity="medium", title="Missing timeout on HTTP request",
+                description="network call can hang forever without a timeout"),
+    ]
+    assert len(_collapse_similar(findings)) == 2
+
+
+def test_dedupe_and_collapse_combines_both_stages():
+    findings = [
+        Finding(severity="low", title="Same title", location="a.py", description="x"),
+        Finding(severity="high", title="Same title", location="a.py", description="x"),  # exact dup
+        Finding(severity="medium", title="Totally unrelated parser bug",
+                description="off-by-one in token scan"),
+    ]
+    out = dedupe_and_collapse(findings)
+    assert len(out) == 2  # exact dup folded, unrelated kept
 
 
 def test_orchestrate_node_returns_report_key():
