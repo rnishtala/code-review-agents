@@ -31,6 +31,31 @@ START → research → summarize → ┌─ bug_agent ─────┐
 - **orchestrator** — dedupes, sorts by severity then confidence, computes a risk rating,
   and renders the markdown report (pure Python, no LLM call).
 
+## Quality guards (taming small models)
+
+Small local models are fast and private but noisy: they hallucinate vulnerability classes
+that aren't in the diff, claim "missing tests" for behavior the PR already tests, and
+describe one issue several ways. Three **deterministic, model-independent** guards prune
+that noise after the agents run (each is pure Python and unit-tested):
+
+- **Security grounding** (`grounding.ground_security_findings`) — drops a security finding
+  when it invokes a vulnerability *concept* (SSRF, SQL injection, weak crypto, auth, …) but
+  the diff contains none of that concept's evidence tokens. A finding that names no tracked
+  concept is always kept, so real issues survive. *(On `pallets/click#3578` this removed 4
+  fabricated findings — SSRF/crypto/auth/injection — on a CLI help-formatting change.)*
+- **Test grounding** (`grounding.ground_test_findings`) — drops a "missing tests" finding
+  that names a test function the diff actually *adds* (`+def test_x`), and drops generic
+  "missing tests" claims when the PR adds tests — unless the finding cites a specific
+  uncovered case (edge case, error path, empty input, …), which is kept.
+- **Near-duplicate collapse** (`orchestrator._collapse_similar`) — merges findings that
+  describe the same issue in different words (Jaccard overlap of significant title/
+  description tokens, strict 0.5 threshold), keeping the strongest per cluster. Applied to
+  both the report and the drafted PR comments, so one issue yields one comment.
+
+These guards are why the system stays usable on a 3B model: they suppress the *actively
+wrong* output. Residual redundancy or mislabeling reflects the model's capacity — a larger
+`qwen2.5-coder:7b` (16 GB+) reduces it further.
+
 ## Setup
 
 1. **Install Ollama** and pull a model:
@@ -179,12 +204,13 @@ src/code_review_agents/
   research.py       research node: linked-issue fetch + optional Tavily web search
   summarizer.py     summarize node
   agents/           bug, security, test specialists (+ shared base)
-  orchestrator.py   dedupe, rank, render report
+  grounding.py      deterministic guards: security + test finding grounding
+  orchestrator.py   dedupe, near-duplicate collapse, rank, render report
   graph.py          builds the LangGraph StateGraph
   comments.py       draft inline PR comments: line mapping, refine agent, pending-review submit
   ui/streamlit_app.py  Streamlit UI to draft, iterate, and submit a draft review
   cli.py            argparse entrypoint
 samples/sample.diff bundled fixture with planted issues
 reports/            sample reports generated on real PRs
-tests/              offline tests (orchestrator, full graph, research, comments)
+tests/              offline tests (orchestrator, grounding, full graph, research, comments)
 ```
