@@ -44,17 +44,26 @@ that noise after the agents run (each is pure Python and unit-tested):
   concept is always kept, so real issues survive. *(On `pallets/click#3578` this removed 4
   fabricated findings — SSRF/crypto/auth/injection — on a CLI help-formatting change.)*
 - **Test grounding** (`grounding.ground_test_findings`) — drops a "missing tests" finding
-  that names a test function the diff actually *adds* (`+def test_x`), and drops generic
-  "missing tests" claims when the PR adds tests — unless the finding cites a specific
-  uncovered case (edge case, error path, empty input, …), which is kept.
+  that names a test function the diff actually *adds*, and drops generic "missing tests"
+  claims when the PR adds tests — unless the finding cites a *concrete* uncovered case
+  (empty input, null, boundary, exception, …). The bare phrase "edge cases" doesn't count
+  as concrete (it's boilerplate). Added-test detection is **language-aware** (Python `def
+  test_…`, Go `func Test…`, Rust/JS, and test-file paths like `*_test.go` / `*.spec.ts`),
+  and the guard runs on **every agent's** findings, since a bug agent can also say "add
+  tests."
 - **Near-duplicate collapse** (`orchestrator._collapse_similar`) — merges findings that
   describe the same issue in different words (Jaccard overlap of significant title/
-  description tokens, strict 0.5 threshold), keeping the strongest per cluster. Applied to
-  both the report and the drafted PR comments, so one issue yields one comment.
+  description tokens; 0.5 by default, relaxed to 0.4 for findings on the same location),
+  keeping the strongest per cluster. It is **content-gated, not a same-line merge**: two
+  *distinct* findings on the same line (e.g. a `medium` "use `TrimSpace`" note alongside a
+  `high` null-check) both survive — collapsing by line alone would drop the useful one.
+  Applied to both the report and the drafted PR comments, so one issue yields one comment.
 
-These guards are why the system stays usable on a 3B model: they suppress the *actively
-wrong* output. Residual redundancy or mislabeling reflects the model's capacity — a larger
-`qwen2.5-coder:7b` (16 GB+) reduces it further.
+These guards are why the system stays usable on a 3B model: they suppress the *fabricated*
+and *boilerplate* output. What they deliberately do **not** touch is *plausible-but-wrong*
+findings (a confident critique that happens to be incorrect) — detecting those needs model
+comprehension, not deterministic post-processing. That residual reflects model capacity; a
+larger `qwen2.5-coder:7b` (16 GB+) reduces it.
 
 ## Setup
 
