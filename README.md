@@ -155,6 +155,29 @@ Workflow:
 > can be hit-or-miss (vague anchors, over-aggressive exclusions); a larger `qwen2.5-coder:7b`
 > behaves noticeably better.
 
+## Benchmarking against a golden dataset
+
+The pipeline can be scored against an external **golden PR-review dataset**
+(`golden_pr_scenarios.json`, maintained in the `org-knowledge-graph-rag` repo): code-change
+scenarios each listing the findings a correct review must surface, tagged with a stable `key`,
+plus the upstream `score_review` precision/recall/F1 contract.
+
+`code_review_agents.golden_eval` is a self-contained **Stage-1 bridge** (no knowledge-graph
+dependency): it adapts each scenario into pipeline inputs, runs the review, **deterministically**
+maps the free-form `Finding`s to expected keys (token overlap — never feeding keys into a prompt),
+and scores them. Point it at the dataset and run:
+
+```bash
+GOLDEN_PR_SCENARIOS=/path/to/golden_pr_scenarios.json \
+PYTHONPATH=src python -m code_review_agents.golden_eval
+```
+
+The measured baseline on `qwen2.5-coder:3b` is **0.00 precision/recall/F1** across all six
+scenarios — the scenarios reward governance/stability/process findings grounded in a knowledge
+graph, while these agents are bug/security/test specialists with no KG, so nothing overlaps. That
+baseline is the point: it sizes how much a future "governance" agent + KG retrieval would need to
+close. The pure pieces are unit-tested offline in `tests/test_golden_eval.py`.
+
 ## Testing
 
 The orchestrator's prioritization and rendering are pure Python and tested offline (no LLM,
