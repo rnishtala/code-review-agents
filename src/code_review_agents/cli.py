@@ -28,7 +28,13 @@ from .diff_input import (
     parse_repo_url,
 )
 from .graph import build_graph
-from .llm import get_base_url, get_model_name
+from .llm import (
+    configure_tracing,
+    get_base_url,
+    get_model_name,
+    has_langsmith_key,
+    tracing_enabled,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -59,6 +65,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         help="Override the Ollama model for this run (default: $OLLAMA_MODEL).",
+    )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Send an end-to-end trace to LangSmith (opt-in). NOTE: this uploads prompts, "
+        "the diff, and model outputs to LangSmith. Requires a LangSmith API key.",
     )
     return parser
 
@@ -109,6 +121,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.pr_number is not None and not args.repo_url:
         print("--pr-number only applies with --repo-url; ignoring.", file=sys.stderr)
 
+    # Tracing is off by default for privacy; --trace (or CODE_REVIEW_ENABLE_TRACING=1) opts in.
+    if args.trace:
+        os.environ["CODE_REVIEW_ENABLE_TRACING"] = "1"
+    if configure_tracing():
+        project = os.environ.get("LANGCHAIN_PROJECT", "code-review-agents")
+        if has_langsmith_key():
+            print(
+                f"LangSmith tracing ON → project '{project}'. "
+                "NOTE: prompts, the diff, and model outputs are sent to LangSmith.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "LangSmith tracing requested but no LANGSMITH_API_KEY / LANGCHAIN_API_KEY "
+                "found — traces will not upload.",
+                file=sys.stderr,
+            )
+
     bundle = _load_input(args)
     if bundle.truncated:
         print("Warning: the diff was truncated before review.", file=sys.stderr)
@@ -125,6 +155,14 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     app = build_graph()
+    source_label = pr_url or args.diff or f"{bundle.owner}/{bundle.repo}#{bundle.number}"
+    # run_name / tags / metadata make the LangSmith trace a single, labeled end-to-end run.
+    # Harmless when tracing is off.
+    run_config = {
+        "run_name": f"code-review: {source_label}",
+        "tags": ["code-review-agents"],
+        "metadata": {"model": get_model_name(), "source": source_label},
+    }
     final_state = app.invoke(
         {
             "diff": bundle.diff,
@@ -134,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
             "number": bundle.number,
             "pr_url": pr_url,
             "findings": [],
-        }
+        },
+        config=run_config,
     )
     report = final_state.get("report", "(no report produced)")
 

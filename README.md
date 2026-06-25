@@ -210,6 +210,28 @@ misses and run-to-run variance on a 3B, not the mapper. The pure pieces are unit
 per-scenario tables, the calibration findings (flooding fix, embedding compression), limitations,
 and reproduction steps.
 
+## Tracing a run with LangSmith (opt-in)
+
+By default **no data leaves your machine** — tracing is forced off even if your shell exports
+`LANGCHAIN_TRACING_V2=true` or a LangSmith key. You can opt in to trace a single run end to end
+(research → summarize → bug/security/test/governance → orchestrate) in the LangSmith UI.
+
+> ⚠️ Enabling tracing **uploads prompts, the diff, and model outputs to LangSmith** (an external
+> hosted service). Only the LLM inference stays local; the trace does not. Use it deliberately.
+
+```bash
+export LANGSMITH_API_KEY=...                 # or LANGCHAIN_API_KEY
+export LANGCHAIN_PROJECT=code-review-agents   # optional; this is the default
+
+PYTHONPATH=src OLLAMA_MODEL=qwen2.5-coder:3b GITHUB_TOKEN=$(gh auth token) \
+  python -m code_review_agents.cli --pr https://github.com/owner/repo/pull/42 --trace
+```
+
+`--trace` sets `CODE_REVIEW_ENABLE_TRACING=1` for the run (you can also export it yourself). The
+run is tagged and named (`code-review: <pr>`) so it appears as one labeled trace tree in LangSmith;
+each graph node and model call is a nested span. If tracing is requested but no API key is found,
+the CLI says so and runs without uploading.
+
 ## Testing
 
 The orchestrator's prioritization and rendering are pure Python and tested offline (no LLM,
