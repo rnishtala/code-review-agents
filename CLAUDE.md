@@ -57,10 +57,12 @@ knowledge-graph dependency**. Pure pieces + glue:
   unified-diff header (non-empty so `summarize` doesn't early-return) and puts repo/title/
   description into `context`. Agents reason from intent, not changed lines — the inherent
   Stage-1 limitation.
-- `map_findings_to_keys(findings, scenario, threshold=0.5, min_shared=2)` — **deterministic**
-  token-overlap (overlap coefficient) of each `Finding` against each `expected_findings` text
-  (prose + key tokens); best match above threshold wins, unmatched → unique `unmapped-*` key
-  (so it costs precision). Never feeds keys into a prompt — that would be teaching to the test.
+- `map_findings_to_keys(findings, scenario, threshold=0.34, min_shared=2)` — **deterministic**
+  token-overlap of each `Finding` against each `expected_findings` text (prose + key tokens),
+  with light stemming and a key-anchor rule (see the "Key mappers" section below); best match
+  wins, unmatched → unique `unmapped-*` key (so it costs precision). Never feeds keys into a
+  prompt — that would be teaching to the test. (This is the default mapper; Stage 2 adds
+  semantic + hybrid variants.)
 - `score_review(...)` — vendored verbatim from the rag-app harness (keeps this repo
   dependency-free for self-scoring).
 - `run_golden_eval(scenarios?, review_fn?, ...)` — input → review → map → score, aggregated;
