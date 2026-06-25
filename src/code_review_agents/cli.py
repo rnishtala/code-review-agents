@@ -75,6 +75,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _inject_trace_link(report: str, url: str) -> str:
+    """Add a `**LangSmith trace:** <url>` line near the top of the report.
+
+    Placed right after the `**Pull request:**` line when present, otherwise just under the
+    `# Code Review Report` title.
+    """
+    line = f"**LangSmith trace:** {url}"
+    lines = report.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.startswith("**Pull request:**"):
+            lines.insert(i + 1, "")
+            lines.insert(i + 2, line)
+            return "\n".join(lines)
+    if lines and lines[0].startswith("# "):
+        lines.insert(1, "")
+        lines.insert(2, line)
+        return "\n".join(lines)
+    return f"{line}\n\n{report}"
+
+
 def _select_pr(owner: str, repo: str, requested: int | None) -> int:
     """Resolve a PR number from a repo, prompting if needed."""
     if requested is not None:
@@ -163,19 +183,39 @@ def main(argv: list[str] | None = None) -> int:
         "tags": ["code-review-agents"],
         "metadata": {"model": get_model_name(), "source": source_label},
     }
-    final_state = app.invoke(
-        {
-            "diff": bundle.diff,
-            "context": bundle.context,
-            "owner": bundle.owner,
-            "repo": bundle.repo,
-            "number": bundle.number,
-            "pr_url": pr_url,
-            "findings": [],
-        },
-        config=run_config,
-    )
+    inputs = {
+        "diff": bundle.diff,
+        "context": bundle.context,
+        "owner": bundle.owner,
+        "repo": bundle.repo,
+        "number": bundle.number,
+        "pr_url": pr_url,
+        "findings": [],
+    }
+
+    # When tracing, run inside the LangSmith context so we can capture the run's URL and
+    # surface it in the report. Falls back to a plain run if anything about it goes wrong.
+    trace_url = ""
+    if tracing_enabled():
+        try:
+            from langchain_core.tracers.context import tracing_v2_enabled
+
+            project = os.environ.get("LANGCHAIN_PROJECT", "code-review-agents")
+            with tracing_v2_enabled(project_name=project) as cb:
+                final_state = app.invoke(inputs, config=run_config)
+            try:
+                trace_url = cb.get_run_url()
+            except Exception:  # noqa: BLE001 - URL is best-effort; the trace still uploaded
+                trace_url = ""
+        except Exception:  # noqa: BLE001 - never let tracing break the review
+            final_state = app.invoke(inputs, config=run_config)
+    else:
+        final_state = app.invoke(inputs, config=run_config)
+
     report = final_state.get("report", "(no report produced)")
+    if trace_url:
+        report = _inject_trace_link(report, trace_url)
+        print(f"LangSmith trace: {trace_url}", file=sys.stderr)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
