@@ -246,6 +246,7 @@ open-source pull requests. The generated reports are checked in under `reports/`
 | [`reports/requests-7502.md`](reports/requests-7502.md) | [psf/requests#7502](https://github.com/psf/requests/pull/7502) — fix `_encode_files` detection | Minimal — clean fix, no findings |
 | [`reports/typer-1821.md`](reports/typer-1821.md) | [tiangolo/typer#1821](https://github.com/tiangolo/typer/pull/1821) — fix list-argument default | High — untested new code |
 | [`reports/flask-5917.md`](reports/flask-5917.md) | [pallets/flask#5917](https://github.com/pallets/flask/pull/5917) — fix `provide_automatic_options` | Medium — **research agent** pulled in linked issue #5916 + web context |
+| [`reports/otel-python-5241.md`](reports/otel-python-5241.md) | [open-telemetry/opentelemetry-python#5241](https://github.com/open-telemetry/opentelemetry-python/pull/5241) — preserve random trace ID flag for child spans | Medium — **governance agent** (ungrounded) + on-target bug/test findings, with some 3B false positives |
 
 Reproduce any of them with:
 
