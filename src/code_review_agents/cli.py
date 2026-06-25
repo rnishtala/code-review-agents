@@ -113,6 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     if bundle.truncated:
         print("Warning: the diff was truncated before review.", file=sys.stderr)
 
+    # Surface the source PR at the top of the report. Use the URL the user gave verbatim;
+    # otherwise reconstruct the canonical github.com URL from the resolved PR coordinates.
+    pr_url = args.pr or ""
+    if not pr_url and bundle.owner and bundle.repo and bundle.number:
+        pr_url = f"https://github.com/{bundle.owner}/{bundle.repo}/pull/{bundle.number}"
+
     print(
         f"Reviewing with model '{get_model_name()}' at {get_base_url()} ...",
         file=sys.stderr,
@@ -126,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             "owner": bundle.owner,
             "repo": bundle.repo,
             "number": bundle.number,
+            "pr_url": pr_url,
             "findings": [],
         }
     )

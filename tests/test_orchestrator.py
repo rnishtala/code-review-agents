@@ -98,6 +98,14 @@ def test_dedupe_collapses_duplicates_keeping_highest_severity():
     assert deduped[0].severity == "critical"
 
 
+def test_report_includes_pr_url_when_provided():
+    url = "https://github.com/owner/repo/pull/42"
+    report = render_report("A summary.", _sample_findings(), pr_url=url)
+    assert f"**Pull request:** {url}" in report
+    # Default (no url) omits the line entirely.
+    assert "**Pull request:**" not in render_report("A summary.", _sample_findings())
+
+
 def test_empty_findings_reports_clean():
     report = render_report("Nothing risky here.", [])
     assert "**Minimal**" in report

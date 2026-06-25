@@ -63,12 +63,13 @@ def review_diff(
     repo: str = "",
     number: int | None = None,
     knowledge: str = "",
+    pr_url: str = "",
 ) -> dict:
     """Convenience helper: run the full pipeline on a diff and return the final state.
 
     ``knowledge`` is optional pre-fetched external context (e.g. knowledge-graph facts)
     merged into the shared research context so every agent — notably the governance
-    specialist — can reason over it.
+    specialist — can reason over it. ``pr_url`` is surfaced at the top of the report.
     """
     app = build_graph()
     return app.invoke(
@@ -79,6 +80,7 @@ def review_diff(
             "repo": repo,
             "number": number,
             "knowledge": knowledge,
+            "pr_url": pr_url,
             "findings": [],
         }
     )

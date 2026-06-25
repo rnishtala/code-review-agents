@@ -153,13 +153,17 @@ def _render_finding(index: int, finding: Finding) -> str:
     return "\n\n".join(bits)
 
 
-def render_report(summary: str, findings: list[Finding], research: str = "") -> str:
+def render_report(
+    summary: str, findings: list[Finding], research: str = "", pr_url: str = ""
+) -> str:
     """Render the full markdown report. Exposed for offline testing."""
     deduped = dedupe_and_collapse(findings)
     rating = _risk_rating(deduped)
 
-    sections = [
-        "# Code Review Report",
+    sections = ["# Code Review Report"]
+    if pr_url.strip():
+        sections.append(f"**Pull request:** {pr_url.strip()}")
+    sections += [
         "## PR Summary",
         summary.strip() or "_No summary available._",
     ]
@@ -195,4 +199,5 @@ def orchestrate(state: ReviewState) -> dict:
     findings = state.get("findings", [])
     summary = state.get("summary", "")
     research = state.get("research", "")
-    return {"report": render_report(summary, findings, research)}
+    pr_url = state.get("pr_url", "")
+    return {"report": render_report(summary, findings, research, pr_url)}

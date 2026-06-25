@@ -76,6 +76,8 @@ class ReviewState(TypedDict, total=False):
     # Optional pre-fetched external knowledge (e.g. knowledge-graph facts) merged into
     # `research` so every agent sees it. Keeps the KG an injected input, not a core dep.
     knowledge: str
+    # Optional source URL (the reviewed PR) surfaced at the top of the report.
+    pr_url: str
     # Produced by the research node: linked-issue (+ optional web) context
     research: str
     # Produced by the summarize node, shared with every downstream node
