@@ -39,6 +39,10 @@ from .state import Finding
 _DEFAULT_SCENARIOS = (
     "/Users/rnishtala/src/jarvis-org/rag-app/data/opentelemetry/golden_pr_scenarios.json"
 )
+# Stage-2 knowledge-graph context cache (produced by scripts/build_kg_context.py).
+_DEFAULT_KG_CONTEXT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "kg_context.json"
+)
 
 
 def load_scenarios(path: str | os.PathLike | None = None) -> list[dict]:
@@ -46,6 +50,19 @@ def load_scenarios(path: str | os.PathLike | None = None) -> list[dict]:
     path = str(path or os.environ.get("GOLDEN_PR_SCENARIOS", _DEFAULT_SCENARIOS))
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)["scenarios"]
+
+
+def load_kg_context(path: str | os.PathLike | None = None) -> dict[str, str]:
+    """Load the Stage-2 ``{scenario_id: kg_context}`` cache, or ``{}`` if absent.
+
+    The cache is produced by ``scripts/build_kg_context.py`` in the rag-app
+    environment (see that file). Override the path with ``GOLDEN_KG_CONTEXT``.
+    """
+    path = str(path or os.environ.get("GOLDEN_KG_CONTEXT", _DEFAULT_KG_CONTEXT))
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 # --------------------------------------------------------------------------- #
@@ -92,13 +109,27 @@ _STOP = {
 }
 
 
+def _stem(token: str) -> str:
+    """Crude suffix stripping so 'renamed'/'renaming'/'rename' and 'guarantee'/'guarantees'
+    collapse to a common root. Not linguistically correct — just enough to absorb the
+    phrasing variance between a model's wording and the gold finding text."""
+    for suf in ("ing", "ed", "ies", "es", "s"):
+        if token.endswith(suf) and len(token) - len(suf) >= 3:
+            return token[: -len(suf)]
+    return token
+
+
 def _tokens(text: str) -> set[str]:
-    return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2 and t not in _STOP}
+    return {
+        _stem(t)
+        for t in re.findall(r"[a-z0-9]+", text.lower())
+        if len(t) > 2 and t not in _STOP
+    }
 
 
 def _key_tokens(key: str) -> set[str]:
-    """Significant tokens from a key like ``stability-guarantee`` -> {stability, guarantee}."""
-    return {t for t in re.split(r"[-_]", key.lower()) if len(t) > 2 and t not in _STOP}
+    """Significant (stemmed) tokens from a key like ``stability-guarantee``."""
+    return {_stem(t) for t in re.split(r"[-_]", key.lower()) if len(t) > 2 and t not in _STOP}
 
 
 def _expected_tokens(expected_finding: dict) -> set[str]:
@@ -122,32 +153,45 @@ def map_findings_to_keys(
     findings: list[Finding],
     scenario: dict,
     *,
-    threshold: float = 0.5,
+    threshold: float = 0.34,
     min_shared: int = 2,
 ) -> list[dict]:
     """Map each finding to the scenario's best-matching ``expected_findings`` key.
 
-    For every finding we score token overlap against each expected finding's text
-    (its prose + key tokens) and assign the best key clearing ``threshold`` with at
-    least ``min_shared`` significant tokens in common. A finding that matches nothing
-    gets a unique ``unmapped-*`` key, so — per the upstream contract — it counts
-    against precision rather than silently vanishing.
+    A finding matches a key when either:
+
+    * **key-anchor** — the finding text contains *all* of the key's own distinctive
+      tokens (e.g. "changelog", or "downstream"+"impact"); the key is a strong label,
+      so naming it is decisive; or
+    * **overlap** — its (stemmed) token overlap-coefficient against the expected
+      finding's text clears ``threshold`` with at least ``min_shared`` shared tokens.
+
+    The best-scoring key wins. A finding matching nothing gets a unique ``unmapped-*``
+    key so — per the upstream contract — it counts against precision rather than
+    silently vanishing. Stemming + the key-anchor rule absorb the phrasing gap between
+    a model's wording ("breaking change to OTLP Receiver", "renamed") and the gold text
+    ("otlpreceiver", "renaming"); the negative tests guard against false matches.
 
     Returns dicts shaped for :func:`score_review` (each has a ``key``), plus
     ``matched``/``score``/``finding`` for inspection.
     """
     expected = [
-        (ef["key"], _expected_tokens(ef)) for ef in scenario.get("expected_findings", [])
+        (ef["key"], _key_tokens(ef["key"]), _expected_tokens(ef))
+        for ef in scenario.get("expected_findings", [])
     ]
     produced: list[dict] = []
     for i, finding in enumerate(findings):
         ftoks = _tokens(_finding_text(finding))
         best_key, best_score = None, 0.0
-        for key, etoks in expected:
-            if len(ftoks & etoks) < min_shared:
+        for key, ktoks, etoks in expected:
+            # Key-anchor: naming every distinctive key token is a decisive match.
+            if ktoks and ktoks <= ftoks:
+                score = max(1.0, _overlap(ftoks, etoks))
+            elif len(ftoks & etoks) >= min_shared and _overlap(ftoks, etoks) >= threshold:
+                score = _overlap(ftoks, etoks)
+            else:
                 continue
-            score = _overlap(ftoks, etoks)
-            if score >= threshold and score > best_score:
+            if score > best_score:
                 best_key, best_score = key, score
         produced.append(
             {
@@ -185,34 +229,40 @@ def score_review(agent_findings: list[dict], scenario: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # 4. Harness: glue input -> review -> map -> score, aggregated
 # --------------------------------------------------------------------------- #
-def _default_review_fn(diff: str, context: str) -> list[Finding]:
+def _default_review_fn(diff: str, context: str, knowledge: str = "") -> list[Finding]:
     """Run the real pipeline (lazily imported so the pure pieces need no LangGraph)."""
     from .graph import review_diff
 
-    return review_diff(diff, context).get("findings", [])
+    return review_diff(diff, context, knowledge=knowledge).get("findings", [])
 
 
 def run_golden_eval(
     scenarios: list[dict] | None = None,
     review_fn=None,
     *,
+    kg_context: dict[str, str] | None = None,
     threshold: float = 0.5,
     min_shared: int = 2,
 ) -> dict:
     """Score the pipeline across all scenarios; return per-scenario rows + macro averages.
 
-    ``review_fn(diff, context) -> list[Finding]`` is injectable so tests can supply a
-    fake (no Ollama); it defaults to the live pipeline.
+    ``review_fn(diff, context, knowledge) -> list[Finding]`` is injectable so tests can
+    supply a fake (no Ollama); it defaults to the live pipeline. ``kg_context`` maps a
+    scenario id to pre-fetched knowledge-graph context (Stage 2); when ``None`` it is
+    loaded from the cache on disk, and an empty mapping reproduces the Stage-1 baseline.
     """
     if scenarios is None:
         scenarios = load_scenarios()
     if review_fn is None:
         review_fn = _default_review_fn
+    if kg_context is None:
+        kg_context = load_kg_context()
 
     rows: list[dict] = []
     for scenario in scenarios:
         diff, context = scenario_to_review_input(scenario)
-        findings = review_fn(diff, context)
+        knowledge = kg_context.get(scenario["id"], "")
+        findings = review_fn(diff, context, knowledge)
         produced = map_findings_to_keys(
             findings, scenario, threshold=threshold, min_shared=min_shared
         )
@@ -226,6 +276,7 @@ def run_golden_eval(
                 "matched": score["matched"],
                 "missed": score["missed"],
                 "n_findings": len(findings),
+                "kg": bool(knowledge.strip()),
             }
         )
 
@@ -235,11 +286,13 @@ def run_golden_eval(
         "avg_precision": sum(r["precision"] for r in rows) / n,
         "avg_recall": sum(r["recall"] for r in rows) / n,
         "avg_f1": sum(r["f1"] for r in rows) / n,
+        "kg_scenarios": sum(1 for r in rows if r["kg"]),
     }
 
 
 def _print_report(result: dict) -> None:
-    print(f"\n=== Golden PR-review eval (Stage 1) ===")
+    stage = "Stage 2 (KG-grounded)" if result.get("kg_scenarios") else "Stage 1 (no KG)"
+    print(f"\n=== Golden PR-review eval — {stage} ===")
     print(f"{'scenario':<38}{'prec':>6}{'recall':>8}{'f1':>6}{'finds':>7}  matched")
     for r in result["rows"]:
         print(

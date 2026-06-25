@@ -2,7 +2,7 @@
 
 A code-review pipeline built on [LangGraph](https://langchain-ai.github.io/langgraph/).
 A pull request is first **researched** (linked issues fetched for context) and
-**summarized**, then three **specialist agents** review the diff in parallel, and an
+**summarized**, then four **specialist agents** review the diff in parallel, and an
 **orchestrator** merges their findings into one prioritized markdown report with an overall
 risk rating.
 
@@ -14,20 +14,26 @@ already uses); an optional web search is off unless you set a key (see below).
 ## Pipeline
 
 ```
-START → research → summarize → ┌─ bug_agent ─────┐
-                               ├─ security_agent ─┤ → orchestrator → report.md
-                               └─ test_agent ─────┘
+START → research → summarize → ┌─ bug_agent ────────┐
+                               ├─ security_agent ────┤
+                               ├─ test_agent ────────┤ → orchestrator → report.md
+                               └─ governance_agent ──┘
 ```
 
 - **research** — extracts issue references (`Fixes #123`, `owner/repo#45`, issue URLs) from
   the PR body/diff, fetches those GitHub issues (title, body, labels, top comments), and —
-  *only if `TAVILY_API_KEY` is set* — adds a web search. This context tells the agents *what
-  problem the PR was meant to solve*, so they can judge whether it actually does.
+  *only if `TAVILY_API_KEY` is set* — adds a web search. It also merges any pre-fetched
+  `knowledge` (e.g. knowledge-graph facts) the caller supplies. This context tells the agents
+  *what problem the PR was meant to solve*, so they can judge whether it actually does.
 - **summarize** — plain-language explanation of *what the PR does* (shared with every agent
   and shown at the top of the report).
 - **bug_agent** — logic errors, edge cases, anti-patterns.
 - **security_agent** — injection, secrets, unsafe APIs, weak crypto, authz gaps.
 - **test_agent** — untested new/changed code and missing edge cases.
+- **governance_agent** — API/wire stability, breaking changes, downstream/dependent impact,
+  and release-process gaps (changelog, code owners, metadata, docs). Most useful when the
+  shared context carries knowledge-graph facts (component stability, ownership, dependencies);
+  see the benchmark section below.
 - **orchestrator** — dedupes, sorts by severity then confidence, computes a risk rating,
   and renders the markdown report (pure Python, no LLM call).
 
@@ -162,21 +168,30 @@ The pipeline can be scored against an external **golden PR-review dataset**
 scenarios each listing the findings a correct review must surface, tagged with a stable `key`,
 plus the upstream `score_review` precision/recall/F1 contract.
 
-`code_review_agents.golden_eval` is a self-contained **Stage-1 bridge** (no knowledge-graph
-dependency): it adapts each scenario into pipeline inputs, runs the review, **deterministically**
-maps the free-form `Finding`s to expected keys (token overlap — never feeding keys into a prompt),
-and scores them. Point it at the dataset and run:
+`code_review_agents.golden_eval` is a self-contained bridge: it adapts each scenario into pipeline
+inputs, runs the review, **deterministically** maps the free-form `Finding`s to expected keys
+(stemmed token overlap + a key-anchor rule — never feeding keys into a prompt), and scores them.
+Point it at the dataset and run:
 
 ```bash
 GOLDEN_PR_SCENARIOS=/path/to/golden_pr_scenarios.json \
 PYTHONPATH=src python -m code_review_agents.golden_eval
 ```
 
-The measured baseline on `qwen2.5-coder:3b` is **0.00 precision/recall/F1** across all six
-scenarios — the scenarios reward governance/stability/process findings grounded in a knowledge
-graph, while these agents are bug/security/test specialists with no KG, so nothing overlaps. That
-baseline is the point: it sizes how much a future "governance" agent + KG retrieval would need to
-close. The pure pieces are unit-tested offline in `tests/test_golden_eval.py`.
+**Stage 1 (no knowledge graph):** scored **0.00** across all six scenarios — the scenarios reward
+governance/stability/process findings grounded in a knowledge graph, while bug/security/test agents
+produce line-level findings, so nothing overlaps.
+
+**Stage 2 (KG-grounded):** adds (a) a `knowledge` seam (`review_diff(..., knowledge=)` → merged
+into shared research context, no Neo4j dependency in core), (b) a **governance agent** that reasons
+about stability / breaking-change / downstream-impact / process from knowledge-graph facts, and
+(c) a cache bridge (`scripts/build_kg_context.py`, run in the knowledge-graph repo's environment)
+that writes `data/kg_context.json`. This lifts the score to **≈ 0.14 / 0.17 / 0.14**
+(precision/recall/F1) on `qwen2.5-coder:3b` — the agent now surfaces real governance findings
+(breaking change, downstream impact, changelog, cross-language rollout). The residual gap is OTel
+*process knowledge* the graph doesn't carry (and a 3B doesn't know) plus a lexical-matching ceiling;
+a larger model and embedding-based mapping would close more. The pure pieces are unit-tested offline
+in `tests/test_golden_eval.py`.
 
 ## Testing
 
@@ -233,16 +248,19 @@ src/code_review_agents/
   state.py          Finding model + ReviewState (additive findings reducer)
   llm.py            ChatOllama factory
   diff_input.py     PR-URL / repo-URL / local-diff loading + issue extraction/fetch
-  research.py       research node: linked-issue fetch + optional Tavily web search
+  research.py       research node: linked-issue fetch + optional Tavily web search + knowledge merge
   summarizer.py     summarize node
-  agents/           bug, security, test specialists (+ shared base)
+  agents/           bug, security, test, governance specialists (+ shared base)
   grounding.py      deterministic guards: security + test finding grounding
   orchestrator.py   dedupe, near-duplicate collapse, rank, render report
   graph.py          builds the LangGraph StateGraph
   comments.py       draft inline PR comments: line mapping, refine agent, pending-review submit
+  golden_eval.py    bridge + harness scoring the pipeline against the golden PR dataset
   ui/streamlit_app.py  Streamlit UI to draft, iterate, and submit a draft review
   cli.py            argparse entrypoint
+scripts/build_kg_context.py  pre-compute knowledge-graph context (run in the rag-app env)
+data/kg_context.json         cached KG facts per golden scenario (for Stage-2 eval)
 samples/sample.diff bundled fixture with planted issues
 reports/            sample reports generated on real PRs
-tests/              offline tests (orchestrator, grounding, full graph, research, comments)
+tests/              offline tests (orchestrator, grounding, full graph, research, comments, golden eval)
 ```

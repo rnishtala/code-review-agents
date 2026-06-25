@@ -81,6 +81,26 @@ def test_research_node_empty_when_no_refs(monkeypatch):
     assert out == {"research": ""}
 
 
+def test_research_node_merges_injected_knowledge():
+    # Pre-fetched knowledge (e.g. KG facts) is surfaced even with no issue refs/repo.
+    out = research_mod.research(
+        {
+            "context": "no refs",
+            "diff": "",
+            "owner": "",
+            "repo": "",
+            "knowledge": "## Knowledge graph\n- OTLP Receiver stability=stable",
+        }
+    )
+    assert "OTLP Receiver stability=stable" in out["research"]
+
+
+def test_research_node_no_knowledge_key_is_safe():
+    # Absent 'knowledge' must not break the node (back-compat with old state).
+    out = research_mod.research({"context": "no refs", "diff": "", "owner": "", "repo": ""})
+    assert out == {"research": ""}
+
+
 def test_research_node_survives_fetch_failure(monkeypatch):
     def boom(*_a):
         raise RuntimeError("github down")

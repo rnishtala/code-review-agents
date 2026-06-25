@@ -91,13 +91,13 @@ def test_full_pipeline_offline(monkeypatch):
     report = final["report"]
     assert "This PR adds user lookup helpers." in report
 
-    # All three agents ran and their (deduped) findings made it into the report.
+    # All agents ran and their (deduped) findings made it into the report.
     assert "SQL injection in find_user" in report
     assert "ZeroDivisionError on empty list" in report
     assert "**Critical**" in report  # risk rating driven by the critical finding
 
     # Findings were stamped with the agent that produced them.
     agents = {f.agent for f in final["findings"]}
-    assert agents == {"bug", "security", "test"}
-    # Three agents each emitted the two canned findings -> six pre-dedupe.
-    assert len(final["findings"]) == 6
+    assert agents == {"bug", "security", "test", "governance"}
+    # Four agents each emitted the two canned findings -> eight pre-dedupe.
+    assert len(final["findings"]) == 8

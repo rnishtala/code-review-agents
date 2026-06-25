@@ -73,6 +73,9 @@ class ReviewState(TypedDict, total=False):
     owner: str  # GitHub owner/repo/number, used by the research node to fetch issues
     repo: str
     number: int
+    # Optional pre-fetched external knowledge (e.g. knowledge-graph facts) merged into
+    # `research` so every agent sees it. Keeps the KG an injected input, not a core dep.
+    knowledge: str
     # Produced by the research node: linked-issue (+ optional web) context
     research: str
     # Produced by the summarize node, shared with every downstream node

@@ -77,11 +77,50 @@ zero. Two scenarios produced 0 findings at all (synthetic diff has no patch body
 line-oriented agents had nothing to flag). This 0.00 sizes Stage 2 precisely: every point of recall
 has to come from the governance agent + KG facts below.
 
-### Bridge — Stage 2 (not built): KG retrieval + governance agent
+### Bridge — Stage 2 (built): KG retrieval + governance agent
 
-To actually raise recall: (1) make the research node accept a pluggable `knowledge_fn(query) ->
-str` (default = today's GitHub-issue fetch) so a golden adapter can inject
-`retrieve(scenario['retrieval_query']).context_block()` from the rag-app — keeps Neo4j an
-*optional* provider, not a core dependency; (2) add a 4th "governance/policy" specialist that
-consumes the KG facts and raises stability / breaking-change / downstream-impact / process
-findings — the only agent that speaks the golden vocabulary.
+Two pieces raise recall off the Stage-1 zero, keeping Neo4j an *optional* provider rather than a
+core dependency:
+
+1. **Knowledge seam.** `ReviewState` gained a `knowledge: str` field; `review_diff(...,
+   knowledge="")` threads it in, and the `research` node merges it into the shared research
+   context so every agent sees it. Core code never imports Neo4j or the rag-app.
+2. **Governance agent** (`agents/governance_agent.py`) — a 4th specialist fanning out alongside
+   bug/security/test. It reasons about stability / breaking-change / downstream-impact / process
+   (changelog, codeowners, metadata, README, spec/SIG approval), grounded in the KG facts in
+   context. It's the only agent that speaks the golden vocabulary.
+3. **KG cache bridge** (`scripts/build_kg_context.py`) — run in the **rag-app venv** (which has
+   Neo4j + `retrieve()`); for each scenario it stores `retrieve(retrieval_query).context_block()`
+   into `data/kg_context.json`. `golden_eval.load_kg_context()` loads it (path via
+   `GOLDEN_KG_CONTEXT`) and `run_golden_eval` injects it as `knowledge=` per scenario. Caching to
+   JSON decouples the repos and makes re-runs reproducible without a live graph. Only KG facts are
+   exported — never the expected findings/keys.
+
+Regenerate the cache when the graph changes:
+```
+cd <rag-app> && source .venv/bin/activate
+PYTHONPATH=<rag-app> python <this-repo>/scripts/build_kg_context.py \
+  --scenarios data/opentelemetry/golden_pr_scenarios.json \
+  --out <this-repo>/data/kg_context.json
+```
+`data/kg_context.json` is committed so the Stage-2 eval runs standalone (no Neo4j needed to
+re-score). The key mapper got light stemming + a key-anchor rule (a finding naming a key's
+distinctive token — e.g. "changelog" — is a decisive match) to absorb phrasing variance between
+model wording and gold prose; threshold 0.34, guarded by negative tests against false matches.
+
+**Measured (`qwen2.5-coder:3b`, 2026-06-25): precision/recall/F1 ≈ 0.14 / 0.17 / 0.14** (Stage 1
+was 0.00). The governance agent now emits genuine governance findings: the OTLP-receiver scenario
+matched `changelog` + `downstream-impact` (0.67 recall), the proto scenario matched
+`cross-language-rollout`. Two findings worth noting:
+
+- **Compact facts are essential.** Feeding the retriever's full `context_block()` (facts + doc
+  chunks) overflowed the 3B's 4096-token window → it flooded (350+ findings) or collapsed to none.
+  The facts-only block (~1.5 KB) fixed both. Hence `build_kg_context.py` exports `.facts`, not
+  `.context_block()`.
+- **Residual misses are two distinct kinds, neither closable by more wiring.** (1) *Process
+  knowledge* the KG doesn't carry and a 3B doesn't know — `missing-metadata`/`codeowners`/`readme`,
+  `schema-version`, `sig-approval` (these scenarios scored 0). (2) The *lexical-vs-semantic matching
+  ceiling* — the agent says "deprecate + add an alias" where gold says "stable component / stability
+  guarantees"; only ~2 tokens overlap, below threshold. A larger model (`qwen2.5-coder:7b`, needs
+  16 GB — doesn't fit this 8 GB Air) addresses (1); embedding-based mapping would address (2). Run-
+  to-run variance is real on a 3B (one run missed `downstream-impact`, the next caught it).

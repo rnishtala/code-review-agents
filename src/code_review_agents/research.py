@@ -98,6 +98,12 @@ def research(state: ReviewState) -> dict:
         if web:
             blocks.append(_render_web(web))
 
+    # Pre-fetched external knowledge (e.g. knowledge-graph facts an upstream caller
+    # supplied) is injected verbatim so every downstream agent reasons over it.
+    knowledge = state.get("knowledge", "").strip()
+    if knowledge:
+        blocks.append(knowledge)
+
     if not blocks:
         return {"research": ""}
 

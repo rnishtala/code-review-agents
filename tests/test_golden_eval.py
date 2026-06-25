@@ -71,6 +71,25 @@ def test_mapper_matches_a_clearly_relevant_finding():
     assert produced[0]["key"] == "stability-guarantee"
 
 
+def test_mapper_key_anchor_matches_on_named_key_token():
+    # Naming the key's distinctive token ("changelog") is a decisive match even when the
+    # rest of the wording differs from the gold prose (the real-3B "version bump" finding).
+    findings = [_f("Version bump required for OTLP Receiver",
+                   "A version bump is needed to reflect this change in the metadata and changelog.")]
+    produced = map_findings_to_keys(findings, _SCENARIO)
+    assert produced[0]["matched"]
+    assert produced[0]["key"] == "changelog"
+
+
+def test_mapper_stemming_absorbs_phrasing_variance():
+    # "renamed"/"breaking"/"stable component" should still reach stability-guarantee
+    # despite differing surface forms from the gold "renaming"/"STABLE".
+    findings = [_f("Breaking change to a stable component",
+                   "renamed config violates the stability guarantees of a stable component")]
+    produced = map_findings_to_keys(findings, _SCENARIO)
+    assert produced[0]["key"] == "stability-guarantee"
+
+
 def test_mapper_leaves_unrelated_finding_unmapped():
     findings = [_f("Possible nil pointer", "factory may dereference a nil pointer on startup")]
     produced = map_findings_to_keys(findings, _SCENARIO)
@@ -103,11 +122,11 @@ def test_score_review_partial_with_extra():
 # --- harness --------------------------------------------------------------- #
 def test_run_golden_eval_with_fake_review_fn():
     # Fake pipeline: surfaces exactly the stability finding for this one scenario.
-    def fake_review_fn(diff, context):
+    def fake_review_fn(diff, context, knowledge=""):
         return [_f("Breaking change to a stable component",
                    "renaming a config field violates stability guarantees on otlpreceiver")]
 
-    result = run_golden_eval([_SCENARIO], fake_review_fn)
+    result = run_golden_eval([_SCENARIO], fake_review_fn, kg_context={})
     row = result["rows"][0]
     assert row["matched"] == ["stability-guarantee"]
     assert row["recall"] == 1 / 3
@@ -115,9 +134,23 @@ def test_run_golden_eval_with_fake_review_fn():
 
 
 def test_run_golden_eval_handles_no_findings():
-    result = run_golden_eval([_SCENARIO], lambda diff, context: [])
+    result = run_golden_eval([_SCENARIO], lambda diff, context, knowledge="": [], kg_context={})
     assert result["avg_recall"] == 0.0
     assert result["avg_precision"] == 0.0
+
+
+def test_run_golden_eval_threads_kg_context_to_review_fn():
+    # The Stage-2 knowledge for a scenario id must reach review_fn as `knowledge`.
+    seen = {}
+
+    def fake_review_fn(diff, context, knowledge=""):
+        seen["knowledge"] = knowledge
+        return []
+
+    kg = {_SCENARIO["id"]: "## Knowledge graph\n- OTLP Receiver stability=stable"}
+    result = run_golden_eval([_SCENARIO], fake_review_fn, kg_context=kg)
+    assert "stability=stable" in seen["knowledge"]
+    assert result["kg_scenarios"] == 1
 
 
 # --- the real golden file, if the clone is present ------------------------- #

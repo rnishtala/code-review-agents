@@ -1,13 +1,15 @@
 """Assemble the LangGraph pipeline.
 
-    START -> research -> summarize -> {bug, security, test} (parallel) -> orchestrate -> END
+    START -> research -> summarize -> {bug, security, test, governance} (parallel)
+          -> orchestrate -> END
 
-``research`` fetches context about the issue the PR fixes (linked GitHub issues, plus an
-optional Tavily web search) and threads it into the state before anything else runs, so
-both the summary and every specialist agent benefit from it. The three specialist agents
-fan out from ``summarize`` (one parallel superstep, each reading the shared summary) and
-fan in to ``orchestrate``, which runs only once all three have completed. Agents append to
-``findings`` via the additive reducer on the state.
+``research`` fetches context about the issue the PR fixes (linked GitHub issues, an
+optional Tavily web search, plus any pre-fetched ``knowledge`` such as knowledge-graph
+facts) and threads it into the state before anything else runs, so both the summary and
+every specialist agent benefit from it. The specialist agents fan out from ``summarize``
+(one parallel superstep, each reading the shared summary) and fan in to ``orchestrate``,
+which runs only once all of them have completed. Agents append to ``findings`` via the
+additive reducer on the state.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from .agents.bug_agent import bug_agent
+from .agents.governance_agent import governance_agent
 from .agents.security_agent import security_agent
 from .agents.test_agent import test_agent
 from .orchestrator import orchestrate
@@ -32,18 +35,21 @@ def build_graph():
     graph.add_node("bug", bug_agent)
     graph.add_node("security", security_agent)
     graph.add_node("test", test_agent)
+    graph.add_node("governance", governance_agent)
     graph.add_node("orchestrate", orchestrate)
 
     graph.add_edge(START, "research")
     graph.add_edge("research", "summarize")
-    # Fan out: all three specialists depend on the summary.
+    # Fan out: all specialists depend on the summary.
     graph.add_edge("summarize", "bug")
     graph.add_edge("summarize", "security")
     graph.add_edge("summarize", "test")
-    # Fan in: orchestrate waits for all three.
+    graph.add_edge("summarize", "governance")
+    # Fan in: orchestrate waits for all of them.
     graph.add_edge("bug", "orchestrate")
     graph.add_edge("security", "orchestrate")
     graph.add_edge("test", "orchestrate")
+    graph.add_edge("governance", "orchestrate")
     graph.add_edge("orchestrate", END)
 
     return graph.compile()
@@ -56,8 +62,14 @@ def review_diff(
     owner: str = "",
     repo: str = "",
     number: int | None = None,
+    knowledge: str = "",
 ) -> dict:
-    """Convenience helper: run the full pipeline on a diff and return the final state."""
+    """Convenience helper: run the full pipeline on a diff and return the final state.
+
+    ``knowledge`` is optional pre-fetched external context (e.g. knowledge-graph facts)
+    merged into the shared research context so every agent — notably the governance
+    specialist — can reason over it.
+    """
     app = build_graph()
     return app.invoke(
         {
@@ -66,6 +78,7 @@ def review_diff(
             "owner": owner,
             "repo": repo,
             "number": number,
+            "knowledge": knowledge,
             "findings": [],
         }
     )
