@@ -206,6 +206,10 @@ a runner-up margin rather than an absolute threshold. The remaining recall gap i
 misses and run-to-run variance on a 3B, not the mapper. The pure pieces are unit-tested offline in
 `tests/test_golden_eval.py`.
 
+**Full write-up:** [`docs/golden-benchmark.md`](docs/golden-benchmark.md) — every stage, the
+per-scenario tables, the calibration findings (flooding fix, embedding compression), limitations,
+and reproduction steps.
+
 ## Testing
 
 The orchestrator's prioritization and rendering are pure Python and tested offline (no LLM,

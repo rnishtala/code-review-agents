@@ -45,6 +45,9 @@ side separately scores reviewer/dependent recall and grounding-fact coverage).
 `Finding`s to scenario `key`s (this knowledge-graph/ownership grounding is orthogonal to the current
 local-diff guards, which target bugs/security/tests rather than SIG ownership and stability policy).
 
+> **Full stage-by-stage write-up with per-scenario result tables:**
+> [`docs/golden-benchmark.md`](docs/golden-benchmark.md). The summary below is the condensed version.
+
 ### Bridge — Stage 1 (built): `src/code_review_agents/golden_eval.py`
 
 A self-contained bridge that scores the existing pipeline against the golden set with **no
