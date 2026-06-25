@@ -186,12 +186,25 @@ produce line-level findings, so nothing overlaps.
 into shared research context, no Neo4j dependency in core), (b) a **governance agent** that reasons
 about stability / breaking-change / downstream-impact / process from knowledge-graph facts, and
 (c) a cache bridge (`scripts/build_kg_context.py`, run in the knowledge-graph repo's environment)
-that writes `data/kg_context.json`. This lifts the score to **≈ 0.14 / 0.17 / 0.14**
-(precision/recall/F1) on `qwen2.5-coder:3b` — the agent now surfaces real governance findings
-(breaking change, downstream impact, changelog, cross-language rollout). The residual gap is OTel
-*process knowledge* the graph doesn't carry (and a 3B doesn't know) plus a lexical-matching ceiling;
-a larger model and embedding-based mapping would close more. The pure pieces are unit-tested offline
-in `tests/test_golden_eval.py`.
+that writes `data/kg_context.json`. The agent now surfaces real governance findings (breaking
+change, downstream impact, changelog, cross-language rollout, missing metadata).
+
+The free-form findings are scored against the expected keys by one of three **interchangeable
+mappers** (`--hybrid` / `--semantic`, else lexical):
+
+| Stage / mapper | precision | recall | F1 |
+| --- | --- | --- | --- |
+| Stage 1 (no KG) | 0.00 | 0.00 | 0.00 |
+| Stage 2, lexical (stemmed token overlap + key-anchor) | 0.14 | 0.17 | 0.14 |
+| **Stage 2, hybrid** (lexical, then local-embedding cosine fallback) | **0.81** | **0.61** | **0.62** |
+
+The **hybrid** mapper (`python -m code_review_agents.golden_eval --hybrid`) runs the lexical mapper
+first, then a local `nomic-embed-text` cosine pass over whatever stayed unmapped — catching
+paraphrases token overlap misses (e.g. "deprecate + add an alias" → `stability-guarantee`). Because
+the embedding model packs this text into a narrow similarity band, the semantic step uses argmax +
+a runner-up margin rather than an absolute threshold. The remaining recall gap is genuine model
+misses and run-to-run variance on a 3B, not the mapper. The pure pieces are unit-tested offline in
+`tests/test_golden_eval.py`.
 
 ## Testing
 

@@ -29,6 +29,7 @@ feeding the expected keys into a prompt would be teaching to the test.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 
@@ -205,6 +206,115 @@ def map_findings_to_keys(
 
 
 # --------------------------------------------------------------------------- #
+# 2b. Semantic key mapper (embedding cosine) — addresses the lexical ceiling
+# --------------------------------------------------------------------------- #
+# The lexical mapper misses paraphrases ("deprecate + add an alias" vs "stable
+# component / stability guarantees" — ~2 shared tokens). A local embedding model
+# (nomic-embed-text, via Ollama) matches on meaning instead of surface tokens.
+EMBED_MODEL = os.environ.get("GOLDEN_EMBED_MODEL", "nomic-embed-text")
+# nomic-embed-text documents task prefixes; "clustering" is its symmetric-similarity
+# task, which is what comparing two short statements calls for.
+_EMBED_PREFIX = "clustering: "
+
+
+def _ollama_embed(texts: list[str]) -> list[list[float]]:
+    """Embed texts with a local Ollama embedding model (one request per text)."""
+    import requests
+
+    from .llm import get_base_url
+
+    url = f"{get_base_url()}/api/embeddings"
+    out: list[list[float]] = []
+    for text in texts:
+        resp = requests.post(
+            url, json={"model": EMBED_MODEL, "prompt": _EMBED_PREFIX + text}, timeout=60
+        )
+        resp.raise_for_status()
+        out.append(resp.json()["embedding"])
+    return out
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def map_findings_to_keys_semantic(
+    findings: list[Finding],
+    scenario: dict,
+    *,
+    embed_fn=None,
+    floor: float = 0.55,
+    margin: float = 0.035,
+) -> list[dict]:
+    """Embedding-based variant of :func:`map_findings_to_keys` (argmax + margin).
+
+    nomic-embed-text packs all of this software/OTel text into a narrow cosine band
+    (~0.66–0.81), so an *absolute* threshold can't separate a real match from a generic
+    one. What survives that compression is the *ranking within a finding*: a finding
+    takes its top-scoring key only when that score clears ``floor`` AND beats the
+    runner-up key by ``margin`` (a confident, unambiguous pick). Everything-looks-similar
+    findings have a tiny top-vs-next gap and stay unmapped.
+
+    ``embed_fn(texts) -> list[vector]`` is injectable so tests run without Ollama; it
+    defaults to a local nomic-embed-text call. Same return shape as the lexical mapper.
+    """
+    expected = scenario.get("expected_findings", [])
+    if not findings or not expected:
+        return [
+            {"key": f"unmapped-{i}", "matched": False, "score": 0.0, "finding": f}
+            for i, f in enumerate(findings)
+        ]
+    embed_fn = embed_fn or _ollama_embed
+
+    exp_texts = [f"{ef.get('key', '')}: {ef.get('finding', '')}" for ef in expected]
+    find_texts = [_finding_text(f) for f in findings]
+    # One batched call: expected first, then findings, so we can slice them apart.
+    vecs = embed_fn(exp_texts + find_texts)
+    exp_vecs = vecs[: len(expected)]
+    find_vecs = vecs[len(expected):]
+
+    produced: list[dict] = []
+    for i, (finding, fvec) in enumerate(zip(findings, find_vecs)):
+        scored = sorted(
+            ((_cosine(fvec, evec), ef["key"]) for ef, evec in zip(expected, exp_vecs)),
+            reverse=True,
+        )
+        best_s, best_key = scored[0]
+        runner = scored[1][0] if len(scored) > 1 else 0.0
+        confident = best_s >= floor and (best_s - runner) >= margin
+        produced.append(
+            {
+                "key": best_key if confident else f"unmapped-{i}",
+                "matched": confident,
+                "score": round(best_s, 3),
+                "finding": finding,
+            }
+        )
+    return produced
+
+
+def map_findings_to_keys_hybrid(findings: list[Finding], scenario: dict, *, embed_fn=None) -> list[dict]:
+    """Lexical first (high-precision literal/key-anchor matches), then a semantic
+    argmax+margin pass over whatever stayed unmapped — catching paraphrases the token
+    overlap misses. The two are complementary: lexical nails "changelog"; semantic nails
+    "deprecate + add an alias" -> stability-guarantee."""
+    lex = map_findings_to_keys(findings, scenario)
+    pending = [i for i, m in enumerate(lex) if not m["matched"]]
+    if not pending:
+        return lex
+    sem = map_findings_to_keys_semantic(
+        [findings[i] for i in pending], scenario, embed_fn=embed_fn
+    )
+    for slot, i in enumerate(pending):
+        if sem[slot]["matched"]:
+            lex[i] = sem[slot]
+    return lex
+
+
+# --------------------------------------------------------------------------- #
 # 3. Scoring — vendored verbatim from org-knowledge-graph-rag/src/evaluate.py
 #    (kept here so this repo needs no dependency on the rag-app to self-score).
 # --------------------------------------------------------------------------- #
@@ -241,7 +351,8 @@ def run_golden_eval(
     review_fn=None,
     *,
     kg_context: dict[str, str] | None = None,
-    threshold: float = 0.5,
+    mapper: str = "lexical",
+    threshold: float | None = None,
     min_shared: int = 2,
 ) -> dict:
     """Score the pipeline across all scenarios; return per-scenario rows + macro averages.
@@ -250,6 +361,8 @@ def run_golden_eval(
     supply a fake (no Ollama); it defaults to the live pipeline. ``kg_context`` maps a
     scenario id to pre-fetched knowledge-graph context (Stage 2); when ``None`` it is
     loaded from the cache on disk, and an empty mapping reproduces the Stage-1 baseline.
+    ``mapper`` is ``"lexical"`` (deterministic token overlap) or ``"semantic"``
+    (local-embedding cosine, which catches paraphrases the lexical mapper misses).
     """
     if scenarios is None:
         scenarios = load_scenarios()
@@ -258,14 +371,20 @@ def run_golden_eval(
     if kg_context is None:
         kg_context = load_kg_context()
 
+    if mapper == "semantic":
+        map_fn = map_findings_to_keys_semantic
+    elif mapper == "hybrid":
+        map_fn = map_findings_to_keys_hybrid
+    else:
+        thr = 0.34 if threshold is None else threshold
+        map_fn = lambda f, sc: map_findings_to_keys(f, sc, threshold=thr, min_shared=min_shared)
+
     rows: list[dict] = []
     for scenario in scenarios:
         diff, context = scenario_to_review_input(scenario)
         knowledge = kg_context.get(scenario["id"], "")
         findings = review_fn(diff, context, knowledge)
-        produced = map_findings_to_keys(
-            findings, scenario, threshold=threshold, min_shared=min_shared
-        )
+        produced = map_fn(findings, scenario)
         score = score_review(produced, scenario)
         rows.append(
             {
@@ -287,12 +406,14 @@ def run_golden_eval(
         "avg_recall": sum(r["recall"] for r in rows) / n,
         "avg_f1": sum(r["f1"] for r in rows) / n,
         "kg_scenarios": sum(1 for r in rows if r["kg"]),
+        "mapper": mapper,
     }
 
 
 def _print_report(result: dict) -> None:
     stage = "Stage 2 (KG-grounded)" if result.get("kg_scenarios") else "Stage 1 (no KG)"
-    print(f"\n=== Golden PR-review eval — {stage} ===")
+    mapper = result.get("mapper", "lexical")
+    print(f"\n=== Golden PR-review eval — {stage}, {mapper} mapper ===")
     print(f"{'scenario':<38}{'prec':>6}{'recall':>8}{'f1':>6}{'finds':>7}  matched")
     for r in result["rows"]:
         print(
@@ -309,7 +430,15 @@ def _print_report(result: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    result = run_golden_eval()
+    import sys
+
+    argv = sys.argv[1:] if argv is None else argv
+    mapper = "lexical"
+    if "--hybrid" in argv:
+        mapper = "hybrid"
+    elif "--semantic" in argv:
+        mapper = "semantic"
+    result = run_golden_eval(mapper=mapper)
     _print_report(result)
 
 

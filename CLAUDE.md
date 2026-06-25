@@ -124,3 +124,34 @@ matched `changelog` + `downstream-impact` (0.67 recall), the proto scenario matc
   guarantees"; only ~2 tokens overlap, below threshold. A larger model (`qwen2.5-coder:7b`, needs
   16 GB — doesn't fit this 8 GB Air) addresses (1); embedding-based mapping would address (2). Run-
   to-run variance is real on a 3B (one run missed `downstream-impact`, the next caught it).
+
+### Key mappers — lexical, semantic, hybrid (`mapper=` / `--hybrid`)
+
+Three interchangeable mappers, same return shape:
+- **lexical** (default) — stemmed token overlap + key-anchor; high precision on literal matches
+  ("changelog"), blind to paraphrases.
+- **semantic** — cosine over local `nomic-embed-text` embeddings. Calibration finding: nomic packs
+  all this OTel/software text into a narrow band (~0.66–0.81), and an *unrelated* finding (nil
+  pointer) scored 0.711 vs `stability-guarantee` — higher than some true matches elsewhere. So an
+  absolute threshold can't separate; instead it uses **argmax + margin** (accept the top key only
+  when it beats the runner-up by ≥0.035 and clears a 0.55 floor), which keys off the meaningful
+  *within-finding ranking* rather than the compressed absolute value.
+- **hybrid** (`--hybrid`) — lexical first, then the semantic argmax+margin pass over whatever stayed
+  unmapped. The two are complementary: lexical nails "changelog"; semantic nails "deprecate + add an
+  alias" → `stability-guarantee`, while still rejecting an unrelated nil-pointer finding.
+
+**Measured progression (`qwen2.5-coder:3b`, all 6 scenarios):**
+
+| Stage / mapper | avg precision | avg recall | avg F1 |
+| --- | --- | --- | --- |
+| Stage 1 (no KG) | 0.00 | 0.00 | 0.00 |
+| Stage 2, lexical | 0.14 | 0.17 | 0.14 |
+| **Stage 2, hybrid** | **0.81** | **0.61** | **0.62** |
+
+With the hybrid mapper every scenario scores > 0 and the matched keys are the correct ones
+(`missing-metadata`/`missing-readme` on the new-component scenario, `wire-compat` on the proto
+scenario, `broad-impact`/`sig-approval` on the semconv scenario, the OTLP-receiver scenario at 1.00
+recall on all three keys; four scenarios at 1.00 precision). The remaining recall gap is genuine
+model misses (findings the 3B simply didn't raise that run) plus real run-to-run variance — not a
+mapping artifact. Caveat: semantic argmax can occasionally place a finding on a plausible-but-wrong
+key; precision stays high (0.81), but the number is approximate on a small model.

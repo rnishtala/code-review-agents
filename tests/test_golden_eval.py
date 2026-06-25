@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from code_review_agents.golden_eval import (  # noqa: E402
     load_scenarios,
     map_findings_to_keys,
+    map_findings_to_keys_hybrid,
+    map_findings_to_keys_semantic,
     run_golden_eval,
     scenario_to_review_input,
     score_review,
@@ -101,6 +103,42 @@ def test_mapper_unmapped_keys_are_unique_so_they_cost_precision():
     findings = [_f("Style nit", "rename variable"), _f("Another nit", "reorder imports")]
     keys = {p["key"] for p in map_findings_to_keys(findings, _SCENARIO)}
     assert len(keys) == 2  # distinct unmapped-* keys, both count against precision
+
+
+# --- semantic + hybrid mappers (fake embeddings, no Ollama) ---------------- #
+# _SCENARIO expected order: stability-guarantee, downstream-impact, changelog.
+# One orthogonal unit vector per key, so cosine = how aligned a finding's vector is.
+def _fake_embed(vectors):
+    """Return an embed_fn that ignores text and yields these vectors in call order."""
+    return lambda texts: vectors
+
+
+def test_semantic_mapper_accepts_confident_rejects_ambiguous():
+    a = _f("Breaking change", "stable component renamed")       # clearly stability
+    b = _f("Generic note", "something broadly applicable")       # ambiguous
+    vectors = [
+        [1.0, 0.0, 0.0],   # stability-guarantee
+        [0.0, 1.0, 0.0],   # downstream-impact
+        [0.0, 0.0, 1.0],   # changelog
+        [0.95, 0.10, 0.0],  # a -> stability, large top-vs-runner margin
+        [0.60, 0.58, 0.55],  # b -> near-tie across keys -> rejected by margin
+    ]
+    out = map_findings_to_keys_semantic([a, b], _SCENARIO, embed_fn=_fake_embed(vectors))
+    assert out[0]["key"] == "stability-guarantee" and out[0]["matched"]
+    assert not out[1]["matched"] and out[1]["key"].startswith("unmapped-")
+
+
+def test_hybrid_uses_lexical_then_semantic():
+    # f_lex matches 'changelog' lexically (key-anchor); f_sem is a paraphrase with no
+    # token overlap, so only the semantic fallback can place it on stability-guarantee.
+    f_lex = _f("Version bump", "add a changelog entry for this")
+    f_sem = _f("Compatibility risk for a frozen interface",
+               "altering a finalized public contract is risky")
+    # embed_fn is called only for the lexically-unmapped finding: expected(3) + 1 pending.
+    vectors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.95, 0.1, 0.0]]
+    out = map_findings_to_keys_hybrid([f_lex, f_sem], _SCENARIO, embed_fn=_fake_embed(vectors))
+    matched = {m["key"] for m in out if m["matched"]}
+    assert matched == {"changelog", "stability-guarantee"}
 
 
 # --- vendored scorer ------------------------------------------------------- #
