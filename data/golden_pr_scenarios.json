@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "purpose": "Golden PR-review scenarios for evaluating agents that review and raise pull requests on OpenTelemetry code. Each scenario describes a code change and the findings/reviewers/affected components a correct, knowledge-grounded review must surface. The knowledge graph is the source of truth for ownership, stability, supported signals, dependents and the responsible SIG.",
+    "how_to_use": "(1) Retrieval grounding: src/evaluate.py runs `retrieval_query` against the graph and scores whether the expected reviewers, affected dependents and grounding facts are surfaced. (2) Agent scoring: call evaluate.score_review(agent_findings, scenario) with an external review agent's findings (each tagged with a `key`) to get precision/recall against `expected_findings`.",
+    "version": "2026-06-22"
+  },
+  "scenarios": [
+    {
+      "id": "pr-otlp-receiver-breaking",
+      "title": "Breaking config rename in the stable OTLP receiver",
+      "repo": "opentelemetry-collector",
+      "files_changed": ["receiver/otlpreceiver/config.go", "receiver/otlpreceiver/factory.go"],
+      "pr_description": "Rename the `grpc` config block to `grpc_settings` in the OTLP receiver to make the schema more consistent.",
+      "retrieval_query": "OTLP receiver stability in the opentelemetry-collector repository and which SIG owns it and what depends on it",
+      "expected_findings": [
+        {"key": "stability-guarantee", "severity": "high",
+         "finding": "otlpreceiver is a STABLE component; renaming a config field is a breaking change that violates stability guarantees and must be avoided or staged with deprecation + alias.",
+         "grounded_in": ["OTLP Receiver stability=stable", "IN_REPO opentelemetry-collector"]},
+        {"key": "downstream-impact", "severity": "high",
+         "finding": "opentelemetry-collector-contrib depends on the core collector; a breaking config change can ripple into contrib distributions and user configs.",
+         "grounded_in": ["opentelemetry-collector-contrib DEPENDS_ON opentelemetry-collector"]},
+        {"key": "changelog", "severity": "medium",
+         "finding": "A changelog entry (.chloggen) describing the breaking change is required.",
+         "grounded_in": []}
+      ],
+      "expected_reviewers": ["Collector"],
+      "affected_dependents": ["opentelemetry-collector-contrib"],
+      "tags": ["stability", "breaking-change", "collector"]
+    },
+    {
+      "id": "pr-contrib-new-exporter-missing-metadata",
+      "title": "New contrib exporter without metadata.yaml or code owners",
+      "repo": "opentelemetry-collector-contrib",
+      "files_changed": ["exporter/acmeexporter/factory.go", "exporter/acmeexporter/exporter.go"],
+      "pr_description": "Add a new acmeexporter that ships traces to the ACME backend.",
+      "retrieval_query": "requirements for adding a new exporter to opentelemetry-collector-contrib and which SIG owns it",
+      "expected_findings": [
+        {"key": "missing-metadata", "severity": "high",
+         "finding": "A new contrib component must include a metadata.yaml declaring its class, stability and supported signals.",
+         "grounded_in": ["IN_REPO opentelemetry-collector-contrib"]},
+        {"key": "missing-codeowners", "severity": "high",
+         "finding": "Contrib components require at least one active code owner in metadata.yaml; a new component cannot merge without a sponsoring code owner.",
+         "grounded_in": []},
+        {"key": "missing-readme", "severity": "medium",
+         "finding": "A README documenting configuration and a changelog entry are required for new components.",
+         "grounded_in": []}
+      ],
+      "expected_reviewers": ["Collector"],
+      "affected_dependents": [],
+      "tags": ["contrib", "new-component", "process"]
+    },
+    {
+      "id": "pr-otlp-proto-new-field",
+      "title": "Add a field to the OTLP protobuf definitions",
+      "repo": "opentelemetry-proto",
+      "files_changed": ["opentelemetry/proto/trace/v1/trace.proto"],
+      "pr_description": "Add an optional `span_flags` field to the Span message in the trace proto.",
+      "retrieval_query": "what depends on opentelemetry-proto and which SIG owns OTLP and the OpenTelemetry protocol",
+      "expected_findings": [
+        {"key": "wire-compat", "severity": "high",
+         "finding": "OTLP is a stable wire protocol; proto changes must be backward/forward compatible (additive, optional fields only) and follow the OTLP versioning rules.",
+         "grounded_in": ["opentelemetry-proto IMPLEMENTS OTLP — OpenTelemetry Protocol"]},
+        {"key": "cross-language-rollout", "severity": "high",
+         "finding": "Every language SDK depends on opentelemetry-proto; a proto change requires coordinated rollout across the SDK repositories.",
+         "grounded_in": ["opentelemetry-go DEPENDS_ON opentelemetry-proto", "opentelemetry-python DEPENDS_ON opentelemetry-proto"]},
+        {"key": "spec-approval", "severity": "high",
+         "finding": "Protocol/spec changes are governed by the Specification SIG and may require spec-sponsor approval or an OTEP.",
+         "grounded_in": ["OWNS opentelemetry-proto"]}
+      ],
+      "expected_reviewers": ["Specification: General + OTel Maintainers Sync"],
+      "affected_dependents": ["opentelemetry-go", "opentelemetry-python", "opentelemetry-java", "opentelemetry-js", "opentelemetry-collector"],
+      "tags": ["otlp", "protocol", "cross-cutting", "spec"]
+    },
+    {
+      "id": "pr-semconv-http-breaking",
+      "title": "Rename an HTTP semantic-convention attribute",
+      "repo": "semantic-conventions",
+      "files_changed": ["model/http/spans.yaml", "docs/http/http-spans.md"],
+      "pr_description": "Rename http.request.method back to http.method across the HTTP conventions.",
+      "retrieval_query": "where are the http semantic conventions defined and which SIG owns semantic conventions",
+      "expected_findings": [
+        {"key": "schema-version", "severity": "high",
+         "finding": "Changing a semantic-convention attribute requires a schema version bump and a schema transformation so consumers can migrate.",
+         "grounded_in": ["http IN_REPO semantic-conventions"]},
+        {"key": "broad-impact", "severity": "high",
+         "finding": "HTTP conventions are consumed by instrumentation across every language; a rename is broadly breaking and needs the stability/deprecation process.",
+         "grounded_in": ["semantic-conventions IMPLEMENTS Semantic Conventions"]},
+        {"key": "sig-approval", "severity": "medium",
+         "finding": "The Semantic Conventions SIG owns this area and must approve attribute changes.",
+         "grounded_in": ["OWNS semantic-conventions"]}
+      ],
+      "expected_reviewers": ["Semantic Conventions: General"],
+      "affected_dependents": [],
+      "tags": ["semconv", "breaking-change", "schema"]
+    },
+    {
+      "id": "pr-kafka-exporter-config",
+      "title": "Add a new optional config option to the Kafka exporter",
+      "repo": "opentelemetry-collector-contrib",
+      "files_changed": ["exporter/kafkaexporter/config.go", "exporter/kafkaexporter/README.md"],
+      "pr_description": "Add an optional `compression` setting (default none) to the Kafka exporter.",
+      "retrieval_query": "kafka exporter stability, supported signals and who maintains it",
+      "expected_findings": [
+        {"key": "additive-ok", "severity": "low",
+         "finding": "kafkaexporter is beta; an optional, backward-compatible config addition with a sensible default is acceptable.",
+         "grounded_in": ["Kafka Exporter SUPPORTS traces"]},
+        {"key": "codeowner-review", "severity": "medium",
+         "finding": "The change must be approved by the Kafka exporter's active code owners (axw, MovieStoreGuy, paulojmdias, pavolloffay).",
+         "grounded_in": ["MAINTAINS Kafka Exporter"]},
+        {"key": "docs-changelog", "severity": "medium",
+         "finding": "Update the component README and add a changelog entry for the new option.",
+         "grounded_in": []}
+      ],
+      "expected_reviewers": ["axw", "MovieStoreGuy", "paulojmdias", "pavolloffay"],
+      "affected_dependents": [],
+      "tags": ["contrib", "component", "additive"]
+    },
+    {
+      "id": "pr-spec-tracer-api-change",
+      "title": "Change the Tracer API surface in the specification",
+      "repo": "opentelemetry-specification",
+      "files_changed": ["specification/trace/api.md"],
+      "pr_description": "Add a new required parameter to Tracer.startSpan in the API specification.",
+      "retrieval_query": "which specification defines the Tracer and Span and which repositories implement the API specification and who owns the specification",
+      "expected_findings": [
+        {"key": "api-stability", "severity": "high",
+         "finding": "The Tracer/Span API is defined by the API Specification and is stable; a new required parameter is a breaking API change requiring strong justification and likely an OTEP.",
+         "grounded_in": ["API Specification DEFINES Tracer", "API Specification DEFINES Span"]},
+        {"key": "all-sdks-impacted", "severity": "high",
+         "finding": "Every language SDK implements the API specification, so this change forces coordinated updates across all SDK repositories.",
+         "grounded_in": ["opentelemetry-go IMPLEMENTS API Specification"]},
+        {"key": "spec-governance", "severity": "high",
+         "finding": "Specification changes are owned by the Specification SIG and require spec-sponsor / Technical Committee review.",
+         "grounded_in": ["OWNS opentelemetry-specification"]}
+      ],
+      "expected_reviewers": ["Specification: General + OTel Maintainers Sync"],
+      "affected_dependents": ["opentelemetry-go", "opentelemetry-python", "opentelemetry-java", "opentelemetry-js"],
+      "tags": ["spec", "api", "breaking-change", "cross-cutting"]
+    }
+  ]
+}

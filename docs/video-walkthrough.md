@@ -36,7 +36,7 @@ To measure a reviewer, you need an answer key. This project uses a **golden data
 OpenTelemetry pull‑request scenarios. Each one lists the findings a correct review *must* raise,
 each with a short label such as `stability-guarantee` or `changelog`.
 
-📄 Open: [`golden_pr_scenarios.json`](/Users/rnishtala/src/jarvis-org/rag-app/data/opentelemetry/golden_pr_scenarios.json)
+📄 Open: [`data/golden_pr_scenarios.json`](../data/golden_pr_scenarios.json) *(mirrored here from the separate `org-knowledge-graph-rag` repo)*
 
 Two scores tell us how it did:
 
